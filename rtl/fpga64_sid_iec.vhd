@@ -102,6 +102,11 @@ port(
 	sid_ver     : in  std_logic;
 	sid_we_ext  : out std_logic;
 	sid_mode    : in  std_logic_vector(1 downto 0);
+	sid_cfg     : in  std_logic_vector(2 downto 0);
+	sid_ld_clk  : in  std_logic;
+	sid_ld_addr : in  std_logic_vector(11 downto 0);
+	sid_ld_data : in  std_logic_vector(15 downto 0);
+	sid_ld_wr   : in  std_logic;
 
 	-- IEC
 	iec_data_o	: out std_logic;
@@ -255,7 +260,7 @@ component sid8580
 		audio_data    : out std_logic_vector(17 downto 0);
 		extfilter_en  : in std_logic
   );
-end component sid8580;
+end component;
 
 component mos6526
 	PORT (
@@ -577,7 +582,7 @@ port map (
 	clock => clk32,
 	reset => reset,
 
-	addr => "000" & cpuAddr(4 downto 0),
+	addr => std_logic_vector(cpuAddr(4 downto 0)),
 	wren => sid_we and sid_sel_int,
 	wdata => std_logic_vector(cpuDo),
 	rdata => sid_do6581,
@@ -585,14 +590,16 @@ port map (
 	potx => pot_x1 and pot_x2,
 	poty => pot_y1 and pot_y2,
 
-	comb_wave_l => '0',
-	comb_wave_r => '0',
-
 	extfilter_en => extfilter_en,
+	cfg => sid_cfg,
 
 	start_iter => clk_1MHz(31),
-	sample_left => audio_6581,
-	sample_right => open
+	sample => audio_6581,
+
+	ld_clk  => sid_ld_clk,
+	ld_addr => sid_ld_addr,
+	ld_data => sid_ld_data,
+	ld_wr   => sid_ld_wr
 );
 
 sid_8580 : sid8580

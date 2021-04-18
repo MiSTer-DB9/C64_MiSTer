@@ -60,7 +60,7 @@ module emu
 	input  [11:0] HDMI_WIDTH,
 	input  [11:0] HDMI_HEIGHT,
 
-`ifdef USE_FB
+`ifdef MISTER_FB
 	// Use framebuffer in DDRAM (USE_FB=1 in qsf)
 	// FB_FORMAT:
 	//    [2:0] : 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
@@ -78,6 +78,7 @@ module emu
 	input         FB_LL,
 	output        FB_FORCE_BLANK,
 
+`ifdef MISTER_FB_PALETTE
 	// Palette control for 8bit modes.
 	// Ignored for other video modes.
 	output        FB_PAL_CLK,
@@ -85,6 +86,7 @@ module emu
 	output [23:0] FB_PAL_DOUT,
 	input  [23:0] FB_PAL_DIN,
 	output        FB_PAL_WR,
+`endif
 `endif
 
 	output        LED_USER,  // 1 - ON, 0 - OFF.
@@ -116,7 +118,6 @@ module emu
 	output        SD_CS,
 	input         SD_CD,
 
-`ifdef USE_DDRAM
 	//High latency DDR3 RAM interface
 	//Use for non-critical time purposes
 	output        DDRAM_CLK,
@@ -129,9 +130,7 @@ module emu
 	output [63:0] DDRAM_DIN,
 	output  [7:0] DDRAM_BE,
 	output        DDRAM_WE,
-`endif
 
-`ifdef USE_SDRAM
 	//SDRAM interface with lower latency
 	output        SDRAM_CLK,
 	output        SDRAM_CKE,
@@ -144,10 +143,10 @@ module emu
 	output        SDRAM_nCAS,
 	output        SDRAM_nRAS,
 	output        SDRAM_nWE,
-`endif
 
-`ifdef DUAL_SDRAM
+`ifdef MISTER_DUAL_SDRAM
 	//Secondary SDRAM
+	//Set all output SDRAM_* signals to Z ASAP if SDRAM2_EN is 0
 	input         SDRAM2_EN,
 	output        SDRAM2_CLK,
 	output [12:0] SDRAM2_A,
@@ -209,48 +208,58 @@ assign VGA_SCALER = 0;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// XXXXXXXXXXXXXXXXXXXXXXXX XXXXXXX XX
+// XXXXXX XXXXXXXXXXXXXXXXX XXXXXXX XXXXXXXX
 
 `include "build_id.v"
 localparam CONF_STR = {
 	"C64;UART2400;",
+	"h0-;",
 	"S0,D64T64,Mount Drive #8;",
-	"D0S1,D64T64,Mount Drive #9;",
-	"OP,Enable Drive #9,No,Yes;",
+	"H0S1,D64T64,Mount Drive #9;",
 	"-;",
 	"F4,PRG,Load File;",
 	"F5,CRT,Load Cartridge;",
 	"-;",
-	"F,TAP,Tape Load;",
-	"R7,Tape Play/Pause;",
-	"RN,Tape Unload;",
-	"OB,Tape Sound,Off,On;",
+	"F6,TAP,Load Tape;",
+	"h3R7,Tape Play/Pause;",
+	"h3RN,Tape Unload;",
+	"h3OB,Tape Sound,Off,On;",
 	"-;",
-	"O2,Video Standard,PAL,NTSC;",
-	"O45,Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"O8A,Scandoubler Fx,None,HQ2x-320,HQ2x-160,CRT 25%,CRT 50%,CRT 75%;",
-	"-;",
-	"H2d1o0,Vertical Crop,No,Yes;",
-	"h2d1o01,Vertical Crop,No,270,216;",
-	"OUV,Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
-	"-;",
-	"OD,SID Left,6581,8580;",
-	"OG,SID Right,6581,8580;",
-	"OKM,SID Right addr,Same,DE00,D420,D500,DF00;",
-	"O6,Audio Filter,On,Off;",
-	"OC,Sound Expander,No,OPL2;",
-	"OIJ,Stereo Mix,None,25%,50%,100%;",
+
+	"P1,Audio & Video;", 
+	"P1O2,Video Standard,PAL,NTSC;",
+	"P1O45,Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"P1O8A,Scandoubler Fx,None,HQ2x-320,HQ2x-160,CRT 25%,CRT 50%,CRT 75%;",
+	"H2d1P1o0,Vertical Crop,No,Yes;",
+	"h2d1P1o01,Vertical Crop,No,270,216;",
+	"P1OUV,Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+	"P1-;",
+	"P1OD,Left SID,6581,8580;",
+	"D4P1o24,Left Filter,Default,8580 Low,8580 High,6581 v1,6581 v2,Custom 1,Custom 2,Custom 3;",
+	"P1OG,Right SID,6581,8580;",
+	"D5P1o57,Right Filter,Default,8580 Low,8580 High,6581 v1,6581 v2,Custom 1,Custom 2,Custom 3;",
+	"P1OKM,Right SID Port,Same,DE00,D420,D500,DF00;",
+	"P1FC7,FLT,Load Custom Filters;",
+	"P1-;",
+	"P1OC,Sound Expander,No,OPL2;",
+	"P1OIJ,Stereo Mix,None,25%,50%,100%;",
+
+	"P2,Hardware;", 
+	"P2-;",
+	"P2OP,Enable Drive #9,No,Yes;",
+	"P2-;",
+	"P2O1,User Port,Joysticks,UART;",
+	"P2OQR,Pot 1&2,Joy 1 Fire 2/3,Mouse,Paddles 1&2;",
+	"P2OST,Pot 3&4,Joy 2 Fire 2/3,Mouse,Paddles 3&4;",
+	"P2-;",
+	"P2OEF,Kernal,Loadable C64,Standard C64,C64GS,Japanese;",
+	
 	"-;",
 	"OUV,UserIO Joystick,Off,DB9MD,DB15 ;",
 	"OT,UserIO Players, 1 Player,2 Players;",
 	"-;",
 	"O3,Swap Joysticks,No,Yes;",
-	"O1,User Port,Joysticks,UART;",
 	"-;",
-	"OQR,Pot 1&2,Joy 1 Fire 2/3,Mouse,Paddles 1&2;",
-	"OST,Pot 3&4,Joy 2 Fire 2/3,Mouse,Paddles 3&4;",
-	"-;",
-	"OEF,Kernal,Loadable C64,Standard C64,C64GS,Japanese;",
 	"-;",
 	"RH,Reset;",
 	"R0,Reset & Detach Cartridge;",
@@ -377,7 +386,7 @@ wire        ioctl_download;
 wire [31:0] sd_lba1, sd_lba2;
 wire  [1:0] sd_rd;
 wire  [1:0] sd_wr;
-wire        sd_ack;
+wire  [1:0] sd_ack;
 wire  [8:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
 wire  [7:0] sd_buff_din1, sd_buff_din2;
@@ -449,12 +458,12 @@ hps_io #(.STRLEN($size(CONF_STR)>>3), .VDNUM(2)) hps_io
 	.conf_str(CONF_STR),
 
 	.status(status),
-	.status_menumask({en1080p, |vcrop,~status[25]}),
+	.status_menumask({status[16],status[13],tap_loaded, en1080p, |vcrop, ~status[25]}),
 	.buttons(buttons),
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus),
 
-	.sd_lba(c1541_1_busy ? sd_lba1 : sd_lba2),
+	.sd_lba((sd_rd[0]|sd_wr[0]) ? sd_lba1 : sd_lba2),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_ack(sd_ack),
@@ -883,8 +892,14 @@ fpga64_sid_iec fpga64
 	.idle(idle),
 	.sid_we_ext(sid_we),
 	.sid_mode({status[22:21]==1,status[20]}),
+	.sid_cfg(status[36:34]),
+	.sid_ld_clk(clk_sys),
+	.sid_ld_addr(sid_ld_addr),
+	.sid_ld_data(sid_ld_data),
+	.sid_ld_wr(sid_ld_wr),
+	
 	.audio_data(audio_l),
-	.extfilter_en(~status[6]),
+	.extfilter_en(1),
 	.sid_ver(status[13]),
 	.iec_data_o(c64_iec_data),
 	.iec_atn_o(c64_iec_atn),
@@ -977,7 +992,7 @@ c1541_sd c1541_1
 	.sd_lba(sd_lba1),
 	.sd_rd(sd_rd[0]),
 	.sd_wr(sd_wr[0]),
-	.sd_ack(sd_ack),
+	.sd_ack(sd_ack[0]),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_din(sd_buff_din1),
@@ -1015,7 +1030,7 @@ c1541_sd c1541_2
 	.sd_lba(sd_lba2),
 	.sd_rd(sd_rd[1]),
 	.sd_wr(sd_wr[1]),
-	.sd_ack(sd_ack),
+	.sd_ack(sd_ack[1]),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_din(sd_buff_din2),
@@ -1193,9 +1208,32 @@ sid_top sid_6581
 	.wdata(c64_data_out),
 	.rdata(data_6581),
 
-	.extfilter_en(~status[6]),
-	.sample_left(audio6581_r)
+	.extfilter_en(1),
+	.cfg(status[39:37]),
+	.sample(audio6581_r),
+
+	.ld_clk(clk_sys),
+	.ld_addr(sid_ld_addr),
+	.ld_data(sid_ld_data),
+	.ld_wr(sid_ld_wr)
 );
+
+reg [11:0] sid_ld_addr = 0;
+reg [15:0] sid_ld_data = 0;
+reg        sid_ld_wr   = 0;
+always @(posedge clk_sys) begin
+	sid_ld_wr <= 0;
+	if(ioctl_wr && ioctl_index == 7 && ioctl_addr < 6144) begin
+		if(ioctl_addr[0]) begin
+			sid_ld_data[15:8] <= ioctl_data;
+			sid_ld_addr <= ioctl_addr[12:1];
+			sid_ld_wr <= 1;
+		end
+		else begin
+			sid_ld_data[7:0] <= ioctl_data;
+		end
+	end
+end
 
 wire [17:0] audio8580_r;
 wire  [7:0] data_8580;
@@ -1210,7 +1248,7 @@ sid8580 sid_8580
 	.data_in(c64_data_out),
 	.data_out(data_8580),
 
-	.extfilter_en(~status[6]),
+	.extfilter_en(1),
 	.audio_data(audio8580_r)
 );	
 

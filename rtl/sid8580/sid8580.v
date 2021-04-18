@@ -19,34 +19,29 @@ module sid8580
 );
 
 // Internal Signals
-reg  [7:0] Voice_1_Freq_lo;
-reg  [7:0] Voice_1_Freq_hi;
-reg  [7:0] Voice_1_Pw_lo;
-reg  [3:0] Voice_1_Pw_hi;
+reg [15:0] Voice_1_Freq;
+reg [11:0] Voice_1_Pw;
 reg  [7:0] Voice_1_Control;
 reg  [7:0] Voice_1_Att_dec;
 reg  [7:0] Voice_1_Sus_Rel;
 
-reg  [7:0] Voice_2_Freq_lo;
-reg  [7:0] Voice_2_Freq_hi;
-reg  [7:0] Voice_2_Pw_lo;
-reg  [3:0] Voice_2_Pw_hi;
+reg [15:0] Voice_2_Freq;
+reg [11:0] Voice_2_Pw;
 reg  [7:0] Voice_2_Control;
 reg  [7:0] Voice_2_Att_dec;
 reg  [7:0] Voice_2_Sus_Rel;
 
-reg  [7:0] Voice_3_Freq_lo;
-reg  [7:0] Voice_3_Freq_hi;
-reg  [7:0] Voice_3_Pw_lo;
-reg  [3:0] Voice_3_Pw_hi;
+reg [15:0] Voice_3_Freq;
+reg [11:0] Voice_3_Pw;
 reg  [7:0] Voice_3_Control;
 reg  [7:0] Voice_3_Att_dec;
 reg  [7:0] Voice_3_Sus_Rel;
 
-reg  [7:0] Filter_Fc_lo;
-reg  [7:0] Filter_Fc_hi;
+reg [10:0] Filter_Fc;
 reg  [7:0] Filter_Res_Filt;
 reg  [7:0] Filter_Mode_Vol;
+
+wire[17:0] sound;
 
 wire [7:0] Misc_Osc3_Random;
 wire [7:0] Misc_Env3;
@@ -74,8 +69,8 @@ reg [7:0] _st_out[3];
 reg [7:0] p_t_out[3];
 reg [7:0] ps__out[3];
 reg [7:0] pst_out[3];
-wire [11:0] sawtooth[3];
-wire [11:0] triangle[3];
+wire [11:0] acc_ps[3];
+wire [11:0] acc_t[3];
 
 // Voice 1 Instantiation
 sid_voice v1
@@ -83,10 +78,8 @@ sid_voice v1
 	.clock(clk),
 	.ce_1m(ce_1m),
 	.reset(reset),
-	.freq_lo(Voice_1_Freq_lo),
-	.freq_hi(Voice_1_Freq_hi),
-	.pw_lo(Voice_1_Pw_lo),
-	.pw_hi(Voice_1_Pw_hi),
+	.freq(Voice_1_Freq),
+	.pw(Voice_1_Pw),
 	.control(Voice_1_Control),
 	.att_dec(Voice_1_Att_dec),
 	.sus_rel(Voice_1_Sus_Rel),
@@ -97,8 +90,8 @@ sid_voice v1
 	.p_t_out(p_t_out[0]),
 	.ps__out(ps__out[0]),
 	.pst_out(pst_out[0]),
-	.sawtooth(sawtooth[0]),
-	.triangle(triangle[0])
+	.acc_ps(acc_ps[0]),
+	.acc_t(acc_t[0])
 );
 
 // Voice 2 Instantiation
@@ -107,10 +100,8 @@ sid_voice v2
 	.clock(clk),
 	.ce_1m(ce_1m),
 	.reset(reset),
-	.freq_lo(Voice_2_Freq_lo),
-	.freq_hi(Voice_2_Freq_hi),
-	.pw_lo(Voice_2_Pw_lo),
-	.pw_hi(Voice_2_Pw_hi),
+	.freq(Voice_2_Freq),
+	.pw(Voice_2_Pw),
 	.control(Voice_2_Control),
 	.att_dec(Voice_2_Att_dec),
 	.sus_rel(Voice_2_Sus_Rel),
@@ -121,8 +112,8 @@ sid_voice v2
 	.p_t_out(p_t_out[1]),
 	.ps__out(ps__out[1]),
 	.pst_out(pst_out[1]),
-	.sawtooth(sawtooth[1]),
-	.triangle(triangle[1])
+	.acc_ps(acc_ps[1]),
+	.acc_t(acc_t[1])
 );
 
 // Voice 3 Instantiation
@@ -131,10 +122,8 @@ sid_voice v3
 	.clock(clk),
 	.ce_1m(ce_1m),
 	.reset(reset),
-	.freq_lo(Voice_3_Freq_lo),
-	.freq_hi(Voice_3_Freq_hi),
-	.pw_lo(Voice_3_Pw_lo),
-	.pw_hi(Voice_3_Pw_hi),
+	.freq(Voice_3_Freq),
+	.pw(Voice_3_Pw),
 	.control(Voice_3_Control),
 	.att_dec(Voice_3_Att_dec),
 	.sus_rel(Voice_3_Sus_Rel),
@@ -147,8 +136,8 @@ sid_voice v3
 	.p_t_out(p_t_out[2]),
 	.ps__out(ps__out[2]),
 	.pst_out(pst_out[2]),
-	.sawtooth(sawtooth[2]),
-	.triangle(triangle[2])
+	.acc_ps(acc_ps[2]),
+	.acc_t(acc_t[2])
 );
 
 // Filter Instantiation
@@ -156,8 +145,7 @@ sid_filters filters
 (
 	.clk(clk),
 	.rst(reset),
-	.Fc_lo(Filter_Fc_lo),
-	.Fc_hi(Filter_Fc_hi),
+	.Fc(Filter_Fc),
 	.Res_Filt(Filter_Res_Filt),
 	.Mode_Vol(Filter_Mode_Vol),
 	.voice1(voice_1),
@@ -165,15 +153,15 @@ sid_filters filters
 	.voice3(voice_3),
 	.input_valid(ce_1m),
 	.ext_in(12'hfff),
-	.sound(audio_data),
+	.sound(sound),
 	.extfilter_en(extfilter_en)
 );
 
 sid_tables sid_tables
 (
 	.clock(clk),
-	.sawtooth(f_sawtooth),
-	.triangle(f_triangle),
+	.acc_ps(f_acc_ps),
+	.acc_t(f_acc_t),
 	._st_out(f__st_out),
 	.p_t_out(f_p_t_out),
 	.ps__out(f_ps__out),
@@ -184,8 +172,8 @@ wire [7:0] f__st_out;
 wire [7:0] f_p_t_out;
 wire [7:0] f_ps__out;
 wire [7:0] f_pst_out;
-reg [11:0] f_sawtooth;
-reg [11:0] f_triangle;
+reg [11:0] f_acc_ps;
+reg [11:0] f_acc_t;
 
 always @(posedge clk) begin
 	reg [3:0] state;
@@ -195,8 +183,8 @@ always @(posedge clk) begin
 
 	case(state)
 		1,5,9: begin
-			f_sawtooth <= sawtooth[state[3:2]];
-			f_triangle <= triangle[state[3:2]];
+			f_acc_ps <= acc_ps[state[3:2]];
+			f_acc_t  <= acc_t[state[3:2]];
 		end
 	endcase
 
@@ -226,31 +214,25 @@ end
 
 
 // Register Decoding
+reg dac_mode;
 always @(posedge clk) begin
 	if (reset) begin
-		Voice_1_Freq_lo <= 0;
-		Voice_1_Freq_hi <= 0;
-		Voice_1_Pw_lo   <= 0;
-		Voice_1_Pw_hi   <= 0;
+		Voice_1_Freq    <= 0;
+		Voice_1_Pw      <= 0;
 		Voice_1_Control <= 0;
 		Voice_1_Att_dec <= 0;
 		Voice_1_Sus_Rel <= 0;
-		Voice_2_Freq_lo <= 0;
-		Voice_2_Freq_hi <= 0;
-		Voice_2_Pw_lo   <= 0;
-		Voice_2_Pw_hi   <= 0;
+		Voice_2_Freq    <= 0;
+		Voice_2_Pw      <= 0;
 		Voice_2_Control <= 0;
 		Voice_2_Att_dec <= 0;
 		Voice_2_Sus_Rel <= 0;
-		Voice_3_Freq_lo <= 0;
-		Voice_3_Freq_hi <= 0;
-		Voice_3_Pw_lo   <= 0;
-		Voice_3_Pw_hi   <= 0;
+		Voice_3_Freq    <= 0;
+		Voice_3_Pw      <= 0;
 		Voice_3_Control <= 0;
 		Voice_3_Att_dec <= 0;
 		Voice_3_Sus_Rel <= 0;
-		Filter_Fc_lo    <= 0;
-		Filter_Fc_hi    <= 0;
+		Filter_Fc       <= 0;
 		Filter_Res_Filt <= 0;
 		Filter_Mode_Vol <= 0;
 	end
@@ -258,34 +240,46 @@ always @(posedge clk) begin
 		if (we) begin
 			last_wr <= data_in;
 			case (addr)
-				5'h00: Voice_1_Freq_lo <= data_in;
-				5'h01: Voice_1_Freq_hi <= data_in;
-				5'h02: Voice_1_Pw_lo   <= data_in;
-				5'h03: Voice_1_Pw_hi   <= data_in[3:0];
-				5'h04: Voice_1_Control <= data_in;
-				5'h05: Voice_1_Att_dec <= data_in;
-				5'h06: Voice_1_Sus_Rel <= data_in;
-				5'h07: Voice_2_Freq_lo <= data_in;
-				5'h08: Voice_2_Freq_hi <= data_in;
-				5'h09: Voice_2_Pw_lo   <= data_in;
-				5'h0a: Voice_2_Pw_hi   <= data_in[3:0];
-				5'h0b: Voice_2_Control <= data_in;
-				5'h0c: Voice_2_Att_dec <= data_in;
-				5'h0d: Voice_2_Sus_Rel <= data_in;
-				5'h0e: Voice_3_Freq_lo <= data_in;
-				5'h0f: Voice_3_Freq_hi <= data_in;
-				5'h10: Voice_3_Pw_lo   <= data_in;
-				5'h11: Voice_3_Pw_hi   <= data_in[3:0];
-				5'h12: Voice_3_Control <= data_in;
-				5'h13: Voice_3_Att_dec <= data_in;
-				5'h14: Voice_3_Sus_Rel <= data_in;
-				5'h15: Filter_Fc_lo    <= data_in;
-				5'h16: Filter_Fc_hi    <= data_in;
-				5'h17: Filter_Res_Filt <= data_in;
-				5'h18: Filter_Mode_Vol <= data_in;
+				5'h00: Voice_1_Freq[7:0] <= data_in;
+				5'h01: Voice_1_Freq[15:8]<= data_in;
+				5'h02: Voice_1_Pw[7:0]   <= data_in;
+				5'h03: Voice_1_Pw[11:8]  <= data_in[3:0];
+				5'h04: Voice_1_Control   <= data_in;
+				5'h05: Voice_1_Att_dec   <= data_in;
+				5'h06: Voice_1_Sus_Rel   <= data_in;
+				5'h07: Voice_2_Freq[7:0] <= data_in;
+				5'h08: Voice_2_Freq[15:8]<= data_in;
+				5'h09: Voice_2_Pw[7:0]   <= data_in;
+				5'h0a: Voice_2_Pw[11:8]  <= data_in[3:0];
+				5'h0b: Voice_2_Control   <= data_in;
+				5'h0c: Voice_2_Att_dec   <= data_in;
+				5'h0d: Voice_2_Sus_Rel   <= data_in;
+				5'h0e: Voice_3_Freq[7:0] <= data_in;
+				5'h0f: Voice_3_Freq[15:8]<= data_in;
+				5'h10: Voice_3_Pw[7:0]   <= data_in;
+				5'h11: Voice_3_Pw[11:8]  <= data_in[3:0];
+				5'h12: Voice_3_Control   <= data_in;
+				5'h13: Voice_3_Att_dec   <= data_in;
+				5'h14: Voice_3_Sus_Rel   <= data_in;
+				5'h15: Filter_Fc[2:0]    <= data_in[2:0];
+				5'h16: Filter_Fc[10:3]   <= data_in;
+				5'h17: Filter_Res_Filt   <= data_in;
+				5'h18: Filter_Mode_Vol   <= data_in;
 			endcase
 		end
+		
+		dac_mode <= ((Voice_1_Control & 8'hf9) == 8'h49 && (Voice_2_Control & 8'hf9) == 8'h49 && (Voice_3_Control & 8'hf9) == 8'h49);
 	end
 end
+
+wire [17:0] dac_out;
+sid8580_dac dac
+(
+	.clock(clk),
+	.addr(Filter_Mode_Vol),
+	.dout(dac_out)
+);
+
+assign audio_data = dac_mode ? dac_out : sound;
 
 endmodule
