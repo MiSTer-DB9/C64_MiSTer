@@ -14,6 +14,7 @@ use IEEE.numeric_std.all;
 entity video_sync is
 port(
 	clk32 : in std_logic;
+	pause : in std_logic;
 	hsync : in std_logic;
 	vsync : in std_logic;
 	ntsc  : in std_logic;
@@ -49,7 +50,7 @@ process(clk32)
 	end if;
 
 	if rising_edge(clk32) then
-		if clk_cnt = "00" then
+		if clk_cnt = "00" and pause = '0' then
 			vsync_r <= vsync;
 			hsync_r <= hsync;
 
@@ -93,12 +94,12 @@ process(clk32)
 					if line_count = 311 then vsync_out <= '0'; end if;
 				end if;
 
-				if line_count = 302 then vblank <= '1'; end if;
-				if line_count = 022 then vblank <= '0'; end if;
+				if line_count = 298 then vblank <= '1'; end if;
+				if line_count = 028 then vblank <= '0'; end if;
 
 				if wide = '0' then
-					if dot_count  = 483 then hblank <= '1'; end if;
-					if dot_count  = 113 then hblank <= '0'; end if;
+					if dot_count  = 490 then hblank <= '1'; end if;
+					if dot_count  = 106 then hblank <= '0'; end if;
 				else
 					if dot_count  = 463 then hblank <= '1'; end if;
 					if dot_count  = 133 then hblank <= '0'; end if;

@@ -1,6 +1,6 @@
 //============================================================================
 //  C64 Top level for MiSTer
-//  Copyright (C) 2017-2019 Sorgelig
+//  Copyright (C) 2017-2021 Sorgelig
 //
 //  Used DE2-35 Top level by Dar (darfpga@aol.fr)
 //
@@ -59,6 +59,7 @@ module emu
 
 	input  [11:0] HDMI_WIDTH,
 	input  [11:0] HDMI_HEIGHT,
+	output        HDMI_FREEZE,
 
 `ifdef MISTER_FB
 	// Use framebuffer in DDRAM (USE_FB=1 in qsf)
@@ -170,57 +171,89 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
-	output	USER_OSD,
+	output        USER_OSD,
 	output  [1:0] USER_MODE,
-	input	[7:0] USER_IN,
-	output	[7:0] USER_OUT,
+	input   [7:0] USER_IN,
+	output  [7:0] USER_OUT,
 
 	input         OSD_STATUS
 );
 
 assign ADC_BUS  = 'Z;
 
+assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
+assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
+
+assign LED_DISK   = 0;
+assign LED_POWER  = 0;
+assign LED_USER   = |drive_led | ioctl_download | tape_led;
+assign BUTTONS    = 0;
+assign VGA_SCALER = 0;
+
 wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
-wire   [2:0] JOY_FLAG  = {status[30],status[31],status[29]}; //Assign 3 bits of status (31:29) o (63:61)
+wire   [2:0] JOY_FLAG = {db9md_ena,~db9md_ena,1'b0};   //Assign 3 bits of status (31:29) o (63:61)
 wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
 wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
 wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
-assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111111,JOY_CLK,JOY_LOAD} : '1;
+//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111011,JOY_CLK,JOY_LOAD} : '1;
 assign       USER_MODE = JOY_FLAG[2:1] ;
-assign       USER_OSD  = joydb_1[10] & joydb_1[6];
+assign       USER_OSD  = JOY_DB1[10] & JOY_DB1[6];
 
+reg  db9md_ena=1'b0;
+reg  db9_1p_ena=1'b0,db9_2p_ena=1'b0;
+wire db9_status = db9md_ena ? 1'b1 : USER_IN[7]; //Falta Comprobar que no este activo ni el puerto serie ni el iec_ext
+always @(posedge clk_sys)                        // status[25] | status[43] 
+ begin
+	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1; 
+   if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
+	if(~JOYDB9MD_1[2] && JOYDB9MD_2[2] || JOYDB15_2[2]) db9_2p_ena <= 1'b1; //Se niega el del player 1 por si no hay Splitter que no se duplique
+ end
 
-assign UART_RTS = UART_CTS;
-assign UART_DTR = UART_DSR;
+wire [15:0] JOY_DB1 = db9md_ena ? JOYDB9MD_1 : JOYDB15_1;
+wire [15:0] JOY_DB2 = db9md_ena ? JOYDB9MD_2 : JOYDB15_2;
 
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
-assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-//assign {UART_RTS, UART_TXD, UART_DTR} = 0;
+reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
+joy_db9md joy_db9md
+(
+  .clk       ( CLK_JOY    ), //40-50MHz
+  .joy_split ( JOY_SPLIT  ),
+  .joy_mdsel ( JOY_MDSEL  ),
+  .joy_in    ( JOY_MDIN   ),
+  .joystick1 ( JOYDB9MD_1 ),
+  .joystick2 ( JOYDB9MD_2 )	  
+);
 
-assign LED_DISK = 0;
-assign LED_POWER = 0;
-assign LED_USER = c1541_1_led | c1541_2_led | ioctl_download | tape_led;
-assign BUTTONS   = 0;
-assign VGA_SCALER = 0;
+reg [15:0] JOYDB15_1,JOYDB15_2;
+joy_db15 joy_db15
+(
+  .clk       ( CLK_JOY   ), //48MHz
+  .JOY_CLK   ( JOY_CLK   ),
+  .JOY_DATA  ( JOY_DATA  ),
+  .JOY_LOAD  ( JOY_LOAD  ),
+  .joystick1 ( JOYDB15_1 ),
+  .joystick2 ( JOYDB15_2 )	  
+);
+
+wire [15:0] joyA = db9_1p_ena ? JOY_DB1 : joyA_USB;
+wire [15:0] joyB = db9_2p_ena ? JOY_DB2 : db9_1p_ena ? joyA_USB : joyB_USB;
+wire [15:0] joyC = db9_2p_ena ? joyA_USB : db9_1p_ena ? joyB_USB : joyC_USB;
+wire [15:0] joyD = db9_2p_ena ? joyB_USB : db9_1p_ena ? joyC_USB : joyD_USB;
 
 // Status Bit Map:
 //              Upper                          Lower
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// XXXXXX XXXXXXXXXXXXXXXXX XXXXXXX XXXXXXXX
+// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXX XXXXXXXXXXXXXXXXXXX
 
 `include "build_id.v"
 localparam CONF_STR = {
-	"C64;UART2400;",
-	"h0-;",
-	"S0,D64T64,Mount Drive #8;",
-	"H0S1,D64T64,Mount Drive #9;",
+	"C64;UART9600:2400;",
+	"H7S0,D64G64T64D81,Mount #8;",
+	"H0S1,D64G64T64D81,Mount #9;",
 	"-;",
-	"F4,PRG,Load File;",
-	"F5,CRT,Load Cartridge;",
-	"-;",
-	"F6,TAP,Load Tape;",
+	"F1,PRGCRTREUTAP;",
+	"h3-;",
 	"h3R7,Tape Play/Pause;",
 	"h3RN,Tape Unload;",
 	"h3OB,Tape Sound,Off,On;",
@@ -230,42 +263,61 @@ localparam CONF_STR = {
 	"P1O2,Video Standard,PAL,NTSC;",
 	"P1O45,Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"P1O8A,Scandoubler Fx,None,HQ2x-320,HQ2x-160,CRT 25%,CRT 50%,CRT 75%;",
-	"H2d1P1o0,Vertical Crop,No,Yes;",
-	"h2d1P1o01,Vertical Crop,No,270,216;",
+	"d1P1o0,Vertical Crop,No,Yes;",
 	"P1OUV,Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
 	"P1-;",
 	"P1OD,Left SID,6581,8580;",
-	"D4P1o24,Left Filter,Default,8580 Low,8580 High,6581 v1,6581 v2,Custom 1,Custom 2,Custom 3;",
+	"D4P1o23,Left Filter,Default,Custom 1,Custom 2,Custom 3;",
 	"P1OG,Right SID,6581,8580;",
-	"D5P1o57,Right Filter,Default,8580 Low,8580 High,6581 v1,6581 v2,Custom 1,Custom 2,Custom 3;",
+	"D5P1o56,Right Filter,Default,Custom 1,Custom 2,Custom 3;",
 	"P1OKM,Right SID Port,Same,DE00,D420,D500,DF00;",
 	"P1FC7,FLT,Load Custom Filters;",
 	"P1-;",
-	"P1OC,Sound Expander,No,OPL2;",
+	"P1OC,Sound Expander,Disabled,OPL2;",
+	"P1o89,DigiMax,Disabled,DE00,DF00;",
 	"P1OIJ,Stereo Mix,None,25%,50%,100%;",
 
 	"P2,Hardware;", 
+	"P2oPQ,Enable Drive #8,If Mounted,Always,Never;",
+	"P2oNO,Enable Drive #9,If Mounted,Always,Never;",
+	"P2oC,Parallel port,Enabled,Disabled;",
+	"P2R6,Reset Disk Drives;",
 	"P2-;",
-	"P2OP,Enable Drive #9,No,Yes;",
+	"P2oK,GeoRAM,Disabled,4MB;",
+	"P2oLM,REU,Disabled,512KB,2MB (512KB wrap),16MB;",
 	"P2-;",
-	"P2O1,User Port,Joysticks,UART;",
-	"P2OQR,Pot 1&2,Joy 1 Fire 2/3,Mouse,Paddles 1&2;",
-	"P2OST,Pot 3&4,Joy 2 Fire 2/3,Mouse,Paddles 3&4;",
+	"P2OP,External IEC,Disabled,Enabled;",
+	"P2oB,Expansion,Joysticks,RS232;",
+	"P2oJ,RS232 mode,UP9600,VIC-1011;",
+	"P2o1,RS232 connection,Internal,External;",
+	"P2o4,Real-Time Clock,Auto,Disabled;",
+	"P2oD,CIA Model,6526,8521;",
 	"P2-;",
-	"P2OEF,Kernal,Loadable C64,Standard C64,C64GS,Japanese;",
-	
-	"-;",
-	"OUV,UserIO Joystick,Off,DB9MD,DB15 ;",
-	"OT,UserIO Players, 1 Player,2 Players;",
+	"P2OQR,Pot 1/2,Joy 1 Fire 2/3,Mouse,Paddles 1/2;",
+	"P2OST,Pot 3/4,Joy 2 Fire 2/3,Mouse,Paddles 3/4;",
+	"P2-;",
+	"P2O1,Release Keys on Reset,Yes,No;",
+	"P2OO,Clear RAM on Reset,Yes,No;",
+	"P2oI,Reset & Run PRG,Yes,No;",
+	"P2oA,Pause When OSD is Open,No,Yes;",
+	"P2-;",
+	"P2FC8,ROM,System ROM C64+C1541 ;",
+	"P2FC9,ROM,System ROM C1581     ;",
+	"P2FC5,CRT,Boot Cartridge       ;",
+	"P2-;",
+	"P2OEF,System ROM,Loadable C64,Standard C64,C64GS,Japanese;",
+
 	"-;",
 	"O3,Swap Joysticks,No,Yes;",
 	"-;",
+	"oEF,Turbo mode,Off,C128,Smart;",
+	"d6oGH,Turbo speed,2x,3x,4x;",
 	"-;",
-	"RH,Reset;",
-	"R0,Reset & Detach Cartridge;",
-	"J,Fire 1,Fire 2,Fire 3,Paddle Btn;",
-	"jn,A,B,Y,X|P;",
-	"jp,A,B,Y,X|P;",
+	"R0,Reset;",
+	"RH,Reset & Detach Cartridge;",
+	"J,Fire 1,Fire 2,Fire 3,Paddle Btn,Mod1,Mod2;",
+	"jn,A,B,Y,X|P,R,L;",
+	"jp,A,B,Y,X|P,R,L;",
 	"V,v",`BUILD_DATE
 };
 
@@ -351,28 +403,42 @@ always @(posedge CLK_50M) begin
 end
 
 reg reset_n;
+reg reset_wait = 0;
 always @(posedge clk_sys) begin
 	integer reset_counter;
+	reg old_download;
+	reg do_erase = 1;
 
-	if (status[0] | status[17] | buttons[1] | !pll_locked) begin
+	reset_n <= !reset_counter;
+	old_download <= ioctl_download;
+
+	if (RESET | status[0] | status[17] | buttons[1] | !pll_locked) begin
+		if(RESET) do_erase <= 1;
 		reset_counter <= 100000;
-		reset_n <= 0;
 	end
-	else if (reset_crt || (ioctl_download && load_cart)) begin
+	else if(~old_download & ioctl_download & load_prg & ~status[50]) begin
+		do_erase <= 1;
+		reset_wait <= 1;
 		reset_counter <= 255;
-		reset_n <= 0;
 	end
-	else if (ioctl_download || inj_meminit);
+	else if (ioctl_download & (load_crt | load_rom)) begin
+		do_erase <= 1;
+		reset_counter <= 255;
+	end
+	else if ((ioctl_download || inj_meminit) & ~reset_wait);
 	else if (erasing) force_erase <= 0;
-	else if (!reset_counter) reset_n <= 1;
+	else if (!reset_counter) begin
+		do_erase <= 0;
+		if(reset_wait && c64_addr == 'hFFCF) reset_wait <= 0;
+	end
 	else begin
 		reset_counter <= reset_counter - 1;
-		if (reset_counter == 100) force_erase <= 1;
+		if (reset_counter == 100 && (~status[24] | do_erase)) force_erase <= 1;
 	end
-end 
+end
 
-
-wire [15:0] joyA_USB, joyB_USB, joyC_USB, joyD_USB;
+wire [15:0] joyA_USB,joyB_USB,joy_USB,joyD_USB;
+wire [15:0] joy = joyA | joyB | joyC | joyD;
 
 wire [63:0] status;
 wire        forced_scandoubler;
@@ -383,16 +449,18 @@ wire  [7:0] ioctl_data;
 wire  [7:0] ioctl_index;
 wire        ioctl_download;
 
-wire [31:0] sd_lba1, sd_lba2;
+wire [31:0] sd_lba[2];
+wire  [5:0] sd_blk_cnt[2];
 wire  [1:0] sd_rd;
 wire  [1:0] sd_wr;
 wire  [1:0] sd_ack;
-wire  [8:0] sd_buff_addr;
+wire [13:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
-wire  [7:0] sd_buff_din1, sd_buff_din2;
+wire  [7:0] sd_buff_din[2];
 wire        sd_buff_wr;
-wire  [1:0] sd_change;
-wire        disk_readonly;
+wire  [1:0] img_mounted;
+wire [31:0] img_size;
+wire        img_readonly;
 
 wire [24:0] ps2_mouse;
 wire [10:0] ps2_key;
@@ -401,122 +469,85 @@ wire [21:0] gamma_bus;
 
 wire  [7:0] pd1,pd2,pd3,pd4;
 
-// F2 F1 U D L R 
-wire [31:0] joyA = joydb_1ena ? (OSD_STATUS? 32'b000000 : {joydb_1[6],joydb_1[5]|joydb_1[4],joydb_1[3:0]}) : joyA_USB;
-wire [31:0] joyB = joydb_2ena ? (OSD_STATUS? 32'b000000 : {joydb_2[6],joydb_2[5]|joydb_2[4],joydb_2[3:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
-wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
-wire [31:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
+wire [64:0] RTC;
 
-wire [15:0] joydb_1 = JOY_FLAG[2] ? JOYDB9MD_1 : JOY_FLAG[1] ? JOYDB15_1 : '0;
-wire [15:0] joydb_2 = JOY_FLAG[2] ? JOYDB9MD_2 : JOY_FLAG[1] ? JOYDB15_2 : '0;
-wire        joydb_1ena = |JOY_FLAG[2:1]              ;
-wire        joydb_2ena = |JOY_FLAG[2:1] & JOY_FLAG[0];
-
-//----BA 9876543210
-//----MS ZYXCBAUDLR
-reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
-joy_db9md joy_db9md
-(
-  .clk       ( CLK_JOY    ), //40-50MHz
-  .joy_split ( JOY_SPLIT  ),
-  .joy_mdsel ( JOY_MDSEL  ),
-  .joy_in    ( JOY_MDIN   ),
-  .joystick1 ( JOYDB9MD_1 ),
-  .joystick2 ( JOYDB9MD_2 )	  
-);
-
-//----BA 9876543210
-//----LS FEDCBAUDLR
-reg [15:0] JOYDB15_1,JOYDB15_2;
-joy_db15 joy_db15
-(
-  .clk       ( CLK_JOY   ), //48MHz
-  .JOY_CLK   ( JOY_CLK   ),
-  .JOY_DATA  ( JOY_DATA  ),
-  .JOY_LOAD  ( JOY_LOAD  ),
-  .joystick1 ( JOYDB15_1 ),
-  .joystick2 ( JOYDB15_2 )	  
-);
-
-
-hps_io #(.STRLEN($size(CONF_STR)>>3), .VDNUM(2)) hps_io
+hps_io #(.CONF_STR(CONF_STR), .VDNUM(2), .BLKSZ(1)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 
+	.joy_raw(JOY_DB1[5:0] | JOY_DB2[5:0]),
 	.joystick_0(joyA_USB),
 	.joystick_1(joyB_USB),
 	.joystick_2(joyC_USB),
 	.joystick_3(joyD_USB),
-	.joy_raw(OSD_STATUS? (joydb_1[5:0]|joydb_2[5:0]) : 6'b000000 ),
-
+	
 	.paddle_0(pd1),
 	.paddle_1(pd2),
 	.paddle_2(pd3),
 	.paddle_3(pd4),
 
-	.conf_str(CONF_STR),
-
 	.status(status),
-	.status_menumask({status[16],status[13],tap_loaded, en1080p, |vcrop, ~status[25]}),
+	.status_menumask({status[58], |status[47:46], status[16], status[13], tap_loaded, 1'b0, |vcrop, status[56]}),
 	.buttons(buttons),
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus),
 
-	.sd_lba((sd_rd[0]|sd_wr[0]) ? sd_lba1 : sd_lba2),
+	.sd_lba(sd_lba),
+	.sd_blk_cnt(sd_blk_cnt),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_ack(sd_ack),
 
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din(c1541_1_busy ? sd_buff_din1 : sd_buff_din2),
+	.sd_buff_din(sd_buff_din),
 	.sd_buff_wr(sd_buff_wr),
-	.img_mounted(sd_change),
-	.img_readonly(disk_readonly),
+	.img_mounted(img_mounted),
+	.img_size(img_size),
+	.img_readonly(img_readonly),
 
 	.ps2_key(ps2_key),
 	.ps2_mouse(ps2_mouse),
+
+	.RTC(RTC),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_data),
-	.ioctl_wait(ioctl_req_wr)
+	.ioctl_wait(ioctl_req_wr|reset_wait)
 );
+
+wire load_prg   = ioctl_index == 'h01;
+wire load_crt   = ioctl_index == 'h41 || ioctl_index == 5;
+wire load_reu   = ioctl_index == 'h81;
+wire load_tap   = ioctl_index == 'hC1;
+wire load_flt   = ioctl_index == 7;
+wire load_rom   = ioctl_index == 8;
+wire load_c1581 = ioctl_index == 9;
 
 wire game;
 wire exrom;
-wire IOE_rom;
-wire IOF_rom;
-wire max_ram;
-wire mem_ce;
+wire io_rom;
+wire cart_ce;
+wire cart_we;
 wire nmi;
-wire reset_crt;
-
+wire cart_oe;
+wire IOF_rd;
+wire  [7:0] cart_data;
 wire [24:0] cart_addr;
-wire load_cart = (ioctl_index == 5) || (ioctl_index == 'hC0);
 
 cartridge cartridge
 (
-	.romL(romL),
-	.romH(romH),
-	.UMAXromH(UMAXromH),
-	.IOE(IOE),
-	.IOF(IOF),
-	.mem_write(~ram_we),
-	.mem_ce(~ram_ce),
-	.mem_ce_out(mem_ce),
-
 	.clk32(clk_sys),
-	.reset(reset_n),
-	.reset_out(reset_crt),
+	.reset_n(reset_n),
 
-	.cart_id(cart_id),
+	.cart_loading(ioctl_download && load_crt),
+	.cart_id(cart_attached ? cart_id : status[52] ? 8'd99 : 8'd255),
 	.cart_exrom(cart_exrom),
 	.cart_game(cart_game),
-
 	.cart_bank_laddr(cart_bank_laddr),
 	.cart_bank_size(cart_bank_size),
 	.cart_bank_num(cart_bank_num),
@@ -524,29 +555,87 @@ cartridge cartridge
 	.cart_bank_raddr(ioctl_load_addr),
 	.cart_bank_wr(cart_hdr_wr),
 
-	.cart_attached(cart_attached),
-	.cart_loading(ioctl_download && load_cart),
-
-	.c64_mem_address_in(c64_addr),
-	.c64_data_out(c64_data_out),
-
-	.sdram_address_out(cart_addr),
 	.exrom(exrom),
 	.game(game),
-	.IOE_ena(IOE_rom),
-	.IOF_ena(IOF_rom),
-	.max_ram(max_ram),
+
+	.romL(romL),
+	.romH(romH),
+	.UMAXromH(UMAXromH),
+	.IOE(IOE),
+	.IOF(IOF),
+	.mem_write(ram_we),
+	.mem_ce(ram_ce),
+	.mem_ce_out(cart_ce),
+	.mem_write_out(cart_we),
+	.IO_rom(io_rom),
+	.IO_rd(cart_oe),
+	.IO_data(cart_data),
+	.addr_in(c64_addr),
+	.data_in(c64_data_out),
+	.addr_out(cart_addr),
+
 	.freeze_key(freeze_key),
 	.mod_key(mod_key),
 	.nmi(nmi),
 	.nmi_ack(nmi_ack)
 );
 
+wire        dma_req;
+wire        dma_cycle;
+wire [15:0] dma_addr;
+wire  [7:0] dma_dout;
+wire  [7:0] dma_din;
+wire        dma_we;
+wire        ext_cycle;
+
+wire [24:0] reu_ram_addr;
+wire  [7:0] reu_ram_dout;
+wire        reu_ram_we;
+
+wire  [7:0] reu_dout;
+wire        reu_irq;
+
+wire        reu_oe  = IOF && reu_cfg;
+wire  [1:0] reu_cfg = status[54:53];
+
+reu reu
+(
+	.clk(clk_sys),
+	.reset(~reset_n),
+	.cfg(reu_cfg),
+
+	.dma_req(dma_req),
+
+	.dma_cycle(dma_cycle),
+	.dma_addr(dma_addr),
+	.dma_dout(dma_dout),
+	.dma_din(dma_din),
+	.dma_we(dma_we),
+
+	.ram_cycle(ext_cycle),
+	.ram_addr(reu_ram_addr),
+	.ram_dout(reu_ram_dout),
+	.ram_din(sdram_data),
+	.ram_we(reu_ram_we),
+	
+	.cpu_addr(c64_addr),
+	.cpu_dout(c64_data_out),
+	.cpu_din(reu_dout),
+	.cpu_we(ram_we),
+	.cpu_cs(IOF),
+	
+	.irq(reu_irq)
+);
+
+reg ext_cycle_d;
+always @(posedge clk_sys) ext_cycle_d <= ext_cycle;
+wire reu_ram_ce = ~ext_cycle_d & ext_cycle & dma_req;
+
 // rearrange joystick contacts for c64
-wire [6:0] joyA_int = {joyA[6:4], joyA[0], joyA[1], joyA[2], joyA[3]};
-wire [6:0] joyB_int = {joyB[6:4], joyB[0], joyB[1], joyB[2], joyB[3]};
-wire [6:0] joyC_c64 = {joyC[6:4], joyC[0], joyC[1], joyC[2], joyC[3]};
-wire [6:0] joyD_c64 = {joyD[6:4], joyD[0], joyD[1], joyD[2], joyD[3]};
+wire [6:0] joyA_int = joy[8] ? 7'd0 : {joyA[6:4], joyA[0], joyA[1], joyA[2], joyA[3]};
+wire [6:0] joyB_int = joy[8] ? 7'd0 : {joyB[6:4], joyB[0], joyB[1], joyB[2], joyB[3]};
+wire [6:0] joyC_c64 = joy[8] ? 7'd0 : {joyC[6:4], joyC[0], joyC[1], joyC[2], joyC[3]};
+wire [6:0] joyD_c64 = joy[8] ? 7'd0 : {joyD[6:4], joyD[0], joyD[1], joyD[2], joyD[3]};
 
 // swap joysticks if requested
 wire [6:0] joyA_c64 = status[3] ? joyB_int : joyA_int;
@@ -557,10 +646,10 @@ wire [7:0] paddle_2 = status[3] ? pd4 : pd2;
 wire [7:0] paddle_3 = status[3] ? pd1 : pd3;
 wire [7:0] paddle_4 = status[3] ? pd2 : pd4;
 
-wire       paddle_1_btn = status[3] ? joyC[7] : joyA[7];
-wire       paddle_2_btn = status[3] ? joyD[7] : joyB[7];
-wire       paddle_3_btn = status[3] ? joyA[7] : joyC[7];
-wire       paddle_4_btn = status[3] ? joyB[7] : joyD[7];
+wire       paddle_1_btn = ~joy[8] & (status[3] ? joyC[7] : joyA[7]);
+wire       paddle_2_btn = ~joy[8] & (status[3] ? joyD[7] : joyB[7]);
+wire       paddle_3_btn = ~joy[8] & (status[3] ? joyA[7] : joyC[7]);
+wire       paddle_4_btn = ~joy[8] & (status[3] ? joyB[7] : joyD[7]);
 
 wire [1:0] pd12_mode = status[27:26];
 wire [1:0] pd34_mode = status[29:28];
@@ -580,16 +669,10 @@ reg  [3:0] cart_hdr_cnt;
 reg        cart_hdr_wr;
 reg [31:0] cart_blk_len;
 
-reg [15:0] inj_start;
-reg [15:0] inj_end;
-
 reg        force_erase;
 reg        erasing;
 
-wire       load_inj = (ioctl_index[5:0] == 4);
-wire       load_prg = (ioctl_index[7:6] == 0) && load_inj;
 reg        inj_meminit = 0;
-reg  [7:0] inj_meminit_data;
 
 wire       io_cycle;
 reg        io_cycle_ce;
@@ -597,20 +680,22 @@ reg        io_cycle_we;
 reg [24:0] io_cycle_addr;
 reg  [7:0] io_cycle_data;
 
-localparam TAP_ADDR = 25'h200000;
+localparam TAP_ADDR = 25'h0200000;
+localparam REU_ADDR = 25'h1000000;
 
 always @(posedge clk_sys) begin
-	reg [4:0] erase_to;
-	reg old_download;
-	reg erase_cram;
-	reg io_cycleD;
-	reg old_st0 = 0;
-	reg old_meminit;
+	reg  [4:0] erase_to;
+	reg        old_download;
+	reg        erase_cram;
+	reg        io_cycleD;
+	reg        old_st0 = 0;
+	reg        old_meminit;
+	reg [15:0] inj_end;
+	reg  [7:0] inj_meminit_data;
 
 	old_download <= ioctl_download;
 	io_cycleD <= io_cycle;
 	cart_hdr_wr <= 0;
-	old_meminit <= inj_meminit;
 	
 	if (~io_cycle & io_cycleD) begin
 		io_cycle_ce <= 1;
@@ -630,18 +715,16 @@ always @(posedge clk_sys) begin
 	if (io_cycle & io_cycleD) {io_cycle_ce, io_cycle_we} <= 0;
 
 	if (ioctl_wr) begin
-		if (load_inj) begin
-			if (load_prg) begin
-				// PRG header
-				// Load address low-byte
-				if      (ioctl_addr == 0) begin ioctl_load_addr[7:0]  <= ioctl_data; inj_start[7:0]  <= ioctl_data; inj_end[7:0]  <= ioctl_data; end
-				// Load address high-byte
-				else if (ioctl_addr == 1) begin ioctl_load_addr[15:8] <= ioctl_data; inj_start[15:8] <= ioctl_data; inj_end[15:8] <= ioctl_data; end
-				else begin ioctl_req_wr <= 1; inj_end <= inj_end + 1'b1; end
-			end
+		if (load_prg) begin
+			// PRG header
+			// Load address low-byte
+			if      (ioctl_addr == 0) begin ioctl_load_addr[7:0]  <= ioctl_data; inj_end[7:0]  <= ioctl_data; end
+			// Load address high-byte
+			else if (ioctl_addr == 1) begin ioctl_load_addr[15:8] <= ioctl_data; inj_end[15:8] <= ioctl_data; end
+			else begin ioctl_req_wr <= 1; inj_end <= inj_end + 1'b1; end
 		end
 
-		if (load_cart) begin
+		if (load_crt) begin
 			if (ioctl_addr == 0) begin
 				ioctl_load_addr <= 24'h100000;
 				cart_blk_len <= 0;
@@ -688,15 +771,20 @@ always @(posedge clk_sys) begin
 			if (ioctl_addr == 0) ioctl_load_addr <= TAP_ADDR;
 			ioctl_req_wr <= 1;
 		end
+
+		if (load_reu) begin
+			if (ioctl_addr == 0) ioctl_load_addr <= REU_ADDR;
+			ioctl_req_wr <= 1;
+		end
 	end
 	
-	if (old_download != ioctl_download && load_cart) begin
+	if (old_download != ioctl_download && load_crt) begin
 		cart_attached <= old_download;
 		erase_cram <= 1;
 	end 
 
 	// meminit for RAM injection
-	if (old_download != ioctl_download && load_inj && !inj_meminit) begin
+	if (old_download != ioctl_download && load_prg && !inj_meminit) begin
 		inj_meminit <= 1;
 		ioctl_load_addr <= 0;
 	end
@@ -729,7 +817,7 @@ always @(posedge clk_sys) begin
 					default: begin
 						ioctl_req_wr <= 0;
 						
-				// advance the address
+						// advance the address
 						ioctl_load_addr <= ioctl_load_addr + 1'b1;
 					end
 				endcase
@@ -737,10 +825,11 @@ always @(posedge clk_sys) begin
 		end
 	end
 
-	start_strk <= (old_meminit && !inj_meminit);
+	old_meminit <= inj_meminit;
+	start_strk  <= old_meminit & ~inj_meminit;
 	
-	old_st0 <= status[0];
-	if (~old_st0 & status[0]) cart_attached <= 0;
+	old_st0 <= status[17];
+	if (~old_st0 & status[17]) cart_attached <= 0;
 	
 	if (!erasing && force_erase) begin
 		erasing <= 1;
@@ -760,42 +849,90 @@ always @(posedge clk_sys) begin
 	end
 end
 
-reg start_strk = 0;
+reg        start_strk = 0;
+reg        reset_keys = 0;
 reg [10:0] key = 0;
 always @(posedge clk_sys) begin
-	reg [3:0] act = 0;
-	int to;
+	reg  [3:0] act = 0;
+	reg        joy_finish = 0;
+	reg [17:0] joy_last = 0;
+	reg [17:0] joy_key;
+	int        to;
 
-	if(~reset_n) act <= 0;
-	if(act) begin
+	reset_keys <= 0;
+
+	joy_key =(joy[9:8] == 3) ?
+				(joy[0] ? 18'h005 : joy[1] ? 18'h006 : joy[2] ? 18'h004 : joy[3] ? 18'h00C  :
+				 joy[4] ? 18'h003 : joy[5] ? 18'h00B : joy[6] ? 18'h083 : joy[7] ? 18'h00A  : 18'h0):
+				(joy[9]) ?
+				(joy[0] ? 18'h016 : joy[1] ? 18'h01E : joy[2] ? 18'h026 : joy[3] ? 18'h025  :
+			    joy[4] ? 18'h02E : joy[5] ? 18'h045 : joy[6] ? 18'h035 : joy[7] ? 18'h031  : 18'h0):
+				(joy[0] ? 18'h174 : joy[1] ? 18'h16B : joy[2] ? 18'h172 : joy[3] ? 18'h175  : 
+				 joy[4] ? 18'h05A : joy[5] ? 18'h029 : joy[6] ? 18'h076 : joy[7] ? 18'h2276 : 18'h0);
+	
+	if(~reset_n) {joy_finish, act} <= 0;
+
+	if(joy[9:8]) begin
+		joy_finish <= 1;
+		if(!joy[7:0] && joy_last) begin
+			joy_last <= 0;
+			reset_keys <= 1;
+		end
+		else if(!joy_last[8:0] && joy_key) begin
+			to <= to + 1'd1;
+			if(joy_last[17:9] != joy_key[17:9]) begin
+				joy_last[17:9] <= joy_key[17:9];
+				key <= joy_key[17:9];
+				key[9] <= 1;
+				key[10] <= ~key[10];
+			end
+			else if(to > 640000 && joy_last[8:0] != joy_key[8:0]) begin
+				joy_last[8:0] <= joy_key[8:0];
+				key <= joy_key[8:0];
+				key[9] <= 1;
+				key[10] <= ~key[10];
+			end
+		end
+		else begin
+			to <= 0;
+		end
+	end
+	else if(joy_finish) begin
+		joy_last   <= 0;
+		key        <= 0;
+		key[10]    <= ps2_key[10];
+		joy_finish <= 0;
+		reset_keys <= 1;
+	end
+	else if(act) begin
 		to <= to + 1;
-		if(to > 640000) begin
+		if(to > 1280000) begin
 			to <= 0;
 			act <= act + 1'd1;
 			case(act)
 				// PS/2 scan codes
-				1:  key <= 'h12;
-				2:  key <= 'h6c;  // <HOME/CLR> instead of ending with ":" so not to break compatibility (eg "a mind is born")
-				5:  key <= 'h12;  // Unstuck shift
-				7:  key <= 'h2d;  // R
-				9:  key <= 'h3c;  // U
-				11: key <= 'h31;  // N
-				13: key <= 'h5a;  // <RETURN>
-				15: act <= 0;
+				 1: key <= 'h2d;  // R
+				 3: key <= 'h3c;  // U
+				 5: key <= 'h31;  // N
+				 7: key <= 'h5a;  // <RETURN>
+				 9: key <= 'h00;
+				10: act <= 0;
 			endcase
-			key[9] <= act[0];
+			key[9]  <= act[0];
+			key[10] <= (act >= 9) ? ps2_key[10] : ~key[10];
 		end
 	end
 	else begin
 		to <= 0;
 		key <= ps2_key;
 	end
-	if(start_strk) act <= 1;
+	if(start_strk & ~status[50]) begin
+		act <= 1;
+		key <= 0;
+	end
 end
 
 assign SDRAM_CKE  = 1;
-assign SDRAM_DQML = 0;
-assign SDRAM_DQMH = 0;
 
 wire [7:0] sdram_data;
 sdram sdram
@@ -808,20 +945,22 @@ sdram sdram
 	.sd_ras(SDRAM_nRAS),
 	.sd_cas(SDRAM_nCAS),
 	.sd_clk(SDRAM_CLK),
+	.sd_dqm({SDRAM_DQMH,SDRAM_DQML}),
 
 	.clk(clk64),
 	.init(~pll_locked),
-	.refresh(idle),
-	.addr( io_cycle ? io_cycle_addr : cart_addr    ),
-	.ce  ( io_cycle ? io_cycle_ce   : mem_ce       ),
-	.we  ( io_cycle ? io_cycle_we   : ~ram_we      ),
-	.din ( io_cycle ? io_cycle_data : c64_data_out ),
+	.refresh(refresh),
+	.addr( io_cycle ? io_cycle_addr : ext_cycle ? reu_ram_addr : cart_addr    ),
+	.ce  ( io_cycle ? io_cycle_ce   : ext_cycle ? reu_ram_ce   : cart_ce      ),
+	.we  ( io_cycle ? io_cycle_we   : ext_cycle ? reu_ram_we   : cart_we      ),
+	.din ( io_cycle ? io_cycle_data : ext_cycle ? reu_ram_dout : c64_data_out ),
 	.dout( sdram_data )
 );
 
 wire  [7:0] c64_data_out;
 wire [15:0] c64_addr;
-wire        idle;
+wire        c64_pause;
+wire        refresh;
 wire        ram_ce;
 wire        ram_we;
 wire        nmi_ack;
@@ -834,8 +973,7 @@ wire        romL;
 wire        romH;
 wire        UMAXromH;
 
-wire        sid_we;
-wire [17:0] audio_l;
+wire [17:0] audio_l,audio_r;
 wire  [7:0] r,g,b;
 
 wire        ntsc = status[2];
@@ -844,44 +982,57 @@ fpga64_sid_iec fpga64
 (
 	.clk32(clk_sys),
 	.reset_n(reset_n),
+	.pause(freeze),
+	.pause_out(c64_pause),
 	.bios(status[15:14]),
+	
+	.turbo_mode({status[47] & ~disk_access, status[46]}),
+	.turbo_speed(status[49:48]),
+
 	.ps2_key(key),
-	.ramaddr(c64_addr),
-	.ramdataout(c64_data_out),
-	.ramdatain(sdram_data),
-	.ramce(ram_ce),
-	.ramwe(ram_we),
+	.kbd_reset((~reset_n & ~status[1]) | reset_keys),
+
+	.ramAddr(c64_addr),
+	.ramDout(c64_data_out),
+	.ramDin(sdram_data),
+	.ramCE(ram_ce),
+	.ramWE(ram_we),
+
 	.ntscmode(ntsc),
 	.hsync(hsync),
 	.vsync(vsync),
 	.r(r),
 	.g(g),
 	.b(b),
+
 	.game(game),
 	.exrom(exrom),
-	.ioe_rom(IOE_rom),
-	.iof_rom(IOF_rom),
-	.max_ram(max_ram),
-	.umaxromh(UMAXromH),
-	.cpu_hasbus(),
+	.UMAXromH(UMAXromH),
 	.irq_n(1),
 	.nmi_n(~nmi),
 	.nmi_ack(nmi_ack),
 	.freeze_key(freeze_key),
 	.mod_key(mod_key),
-	.dma_n(1'b1),
 	.roml(romL),
 	.romh(romH),
 	.ioe(IOE),
 	.iof(IOF),
-	.iof_ext(opl_en),
-	.ioe_ext(1'b0),
-	.io_data(sid2_oe ? (status[16] ? data_8580 : data_6581) : opl_dout),
+	.io_rom(io_rom),
+	.io_ext(cart_oe | reu_oe | opl_en),
+	.io_data(cart_oe ? cart_data : reu_oe ? reu_dout : opl_dout),
+	
+	.dma_req(dma_req),
+	.dma_cycle(dma_cycle),
+	.dma_addr(dma_addr),
+	.dma_dout(dma_dout),
+	.dma_din(dma_din),
+	.dma_we(dma_we),
+	.irq_ext_n(~reu_irq),
 
-	.joya(joyA_c64 | {1'b0, pd12_mode[1] & paddle_2_btn, pd12_mode[1] & paddle_1_btn, 2'b00} | {pd12_mode[0] & mouse_btn[0], 3'b000, pd12_mode[0] & mouse_btn[1]}),
-	.joyb(joyB_c64 | {1'b0, pd34_mode[1] & paddle_4_btn, pd34_mode[1] & paddle_3_btn, 2'b00} | {pd34_mode[0] & mouse_btn[0], 3'b000, pd34_mode[0] & mouse_btn[1]}),
-	.joyc(joyC_c64),
-	.joyd(joyD_c64),
+	.cia_mode(status[45]),
+
+	.joya({(pd12_mode && !joy[9:8]) ? joyA_c64[6:5] : 2'b00, joyA_c64[4:0] | {1'b0, pd12_mode[1] & paddle_2_btn, pd12_mode[1] & paddle_1_btn, 2'b00} | {pd12_mode[0] & mouse_btn[0], 3'b000, pd12_mode[0] & mouse_btn[1]}}),
+	.joyb({(pd34_mode && !joy[9:8]) ? joyB_c64[6:5] : 2'b00, joyB_c64[4:0] | {1'b0, pd34_mode[1] & paddle_4_btn, pd34_mode[1] & paddle_3_btn, 2'b00} | {pd34_mode[0] & mouse_btn[0], 3'b000, pd34_mode[0] & mouse_btn[1]}}),
 
 	.pot1(pd12_mode[1] ? paddle_1 : pd12_mode[0] ? mouse_x : {8{joyA_c64[5]}}),
 	.pot2(pd12_mode[1] ? paddle_2 : pd12_mode[0] ? mouse_y : {8{joyA_c64[6]}}),
@@ -889,42 +1040,49 @@ fpga64_sid_iec fpga64
 	.pot4(pd34_mode[1] ? paddle_4 : pd34_mode[0] ? mouse_y : {8{joyB_c64[6]}}),
 
 	.io_cycle(io_cycle),
-	.idle(idle),
-	.sid_we_ext(sid_we),
-	.sid_mode({status[22:21]==1,status[20]}),
-	.sid_cfg(status[36:34]),
+	.ext_cycle(ext_cycle),
+	.refresh(refresh),
+
 	.sid_ld_clk(clk_sys),
 	.sid_ld_addr(sid_ld_addr),
 	.sid_ld_data(sid_ld_data),
 	.sid_ld_wr(sid_ld_wr),
-	
-	.audio_data(audio_l),
-	.extfilter_en(1),
-	.sid_ver(status[13]),
+	.sid_mode(status[22:20]),
+	.sid_filter(2'b11),
+	.sid_ver({status[16],status[13]}),
+	.sid_cfg({status[38:37],status[35:34]}),
+	.audio_l(audio_l),
+	.audio_r(audio_r),
+
 	.iec_data_o(c64_iec_data),
 	.iec_atn_o(c64_iec_atn),
 	.iec_clk_o(c64_iec_clk),
-	.iec_data_i(c64_iec_data_i),
-	.iec_clk_i(c64_iec_clk_i),
+	.iec_data_i(drive_iec_data),
+	.iec_clk_i(drive_iec_clk),
+
+	.pb_i(pb_i),
+	.pb_o(pb_o),
+	.pa2_i(pa2_i),
+	.pa2_o(pa2_o),
+	.pc2_n_o(pc2_n_o),
+	.flag2_n_i(flag2_n_i),
+	.sp2_i(sp2_i),
+	.sp2_o(sp2_o),
+	.sp1_i(sp1_i),
+	.sp1_o(sp1_o),
+	.cnt2_i(cnt2_i),
+	.cnt2_o(cnt2_o),
+	.cnt1_i(cnt1_i),
+	.cnt1_o(cnt1_o),
+
 	.c64rom_addr(ioctl_addr[13:0]),
 	.c64rom_data(ioctl_data),
-	.c64rom_wr((ioctl_index == 0) && !ioctl_addr[14] && ioctl_download && ioctl_wr),
+	.c64rom_wr(load_rom && !ioctl_addr[16:14] && ioctl_download && ioctl_wr),
 
+	.cass_write(cass_write),
 	.cass_motor(cass_motor),
-	.cass_sense(~tap_play),
-	.cass_in(cass_do),
-
-	.uart_enable(status[1]),
-	.uart_txd(UART_TXD),
-	.uart_rts(!UART_RTS), // Trying inverting these, as I think they are breaking minicom and other terminal programs on the HPS? ElectronAsh.
-	.uart_dtr(!UART_DTR),
-	.uart_ri_out(),
-	.uart_dcd_out(),
-	.uart_rxd(UART_RXD),
-	.uart_ri_in(1),	    // I think these are active-High on the User Port? (even those TXD and RXD seem to be active-low.) ElectronAsh.
-	.uart_dcd_in(1),
-	.uart_cts(1),
-	.uart_dsr(1)
+	.cass_sense(use_tape ? ~tap_play : cass_rtc),
+	.cass_in(cass_do)
 );
 
 wire [7:0] mouse_x;
@@ -943,117 +1101,111 @@ c1351 mouse
 	.button(mouse_btn)
 );
 
-wire drive9 = status[25];
+wire       c64_iec_clk;
+wire       c64_iec_data;
+wire       c64_iec_atn;
 
-reg c64_iec_data_i, c64_iec_clk_i;
-always @(posedge clk_sys) begin
-	reg iec_data_d1, iec_clk_d1;
-	reg iec_data_d2, iec_clk_d2;
+wire       drive_iec_clk  = drive_iec_clk_o  & ext_iec_clk;
+wire       drive_iec_data = drive_iec_data_o & ext_iec_data;
 
-	iec_data_d1 <= c1541_1_iec_data & (~drive9 | c1541_2_iec_data);
-	iec_data_d2 <= iec_data_d1;
-	if(iec_data_d1 == iec_data_d2) c64_iec_data_i <= iec_data_d2;
+wire [7:0] drive_par_i;
+wire       drive_stb_i;
+wire [7:0] drive_par_o;
+wire       drive_stb_o;
+wire       drive_iec_clk_o;
+wire       drive_iec_data_o;
+wire       drive_reset = ~reset_n | status[6] | (load_c1581 & ioctl_download);
 
-	iec_clk_d1 <= c1541_1_iec_clk & (~drive9 | c1541_2_iec_clk);
-	iec_clk_d2 <= iec_clk_d1;
-	if(iec_clk_d1 == iec_clk_d2) c64_iec_clk_i <= iec_clk_d2;
+wire [1:0] drive_led;
+
+reg [1:0] drive_mounted = 0;
+always @(posedge clk_sys) begin 
+	if(img_mounted[0]) drive_mounted[0] <= |img_size;
+	if(img_mounted[1]) drive_mounted[1] <= |img_size;
 end
 
-wire c64_iec_clk;
-wire c64_iec_data;
-wire c64_iec_atn;
-
-wire c1541_1_iec_clk;
-wire c1541_1_iec_data;
-wire c1541_1_led;
-wire c1541_1_busy;
-
-c1541_sd c1541_1
+iec_drive iec_drive
 (
-	.clk_c1541(clk64 & ce_c1541),
-	.clk_sys(clk_sys),
+	.clk(clk_sys),
+	.reset({drive_reset | ((!status[56:55]) ? ~drive_mounted[1] : status[56]),
+		     drive_reset | ((!status[58:57]) ? ~drive_mounted[0] : status[58])}),
 
-	.rom_addr(ioctl_addr[13:0]),
-	.rom_data(ioctl_data),
-	.rom_wr((ioctl_index == 0) &&  ioctl_addr[14] && ioctl_download && ioctl_wr),
-	.rom_std(status[14]),
-
-	.disk_change(sd_change[0]),
-	.disk_readonly(disk_readonly),
-	.drive_num(0),
+	.ce(drive_ce),
 
 	.iec_atn_i(c64_iec_atn),
-	.iec_data_i(c64_iec_data),
-	.iec_clk_i(c64_iec_clk),
-	.iec_data_o(c1541_1_iec_data),
-	.iec_clk_o(c1541_1_iec_clk),
-	.iec_reset_i(~reset_n),
+	.iec_data_i(c64_iec_data & ext_iec_data),
+	.iec_clk_i(c64_iec_clk & ext_iec_clk),
+	.iec_data_o(drive_iec_data_o),
+	.iec_clk_o(drive_iec_clk_o),
 
-	.sd_lba(sd_lba1),
-	.sd_rd(sd_rd[0]),
-	.sd_wr(sd_wr[0]),
-	.sd_ack(sd_ack[0]),
-	.sd_buff_addr(sd_buff_addr),
-	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din(sd_buff_din1),
-	.sd_buff_wr(sd_buff_wr),
-	.sd_busy(c1541_1_busy),
+	.pause(c64_pause),
 
-	.led(c1541_1_led)
-);
+	.img_mounted(img_mounted),
+	.img_size(img_size),
+	.img_readonly(img_readonly),
+	.img_type(&ioctl_index[7:6] ? 2'b11 : 2'b01),
 
-wire c1541_2_iec_clk;
-wire c1541_2_iec_data;
-wire c1541_2_led;
+	.led(drive_led),
 
-c1541_sd c1541_2
-(
-	.clk_c1541(clk64 & ce_c1541),
+	.par_data_i(drive_par_i),
+	.par_stb_i(drive_stb_i),
+	.par_data_o(drive_par_o),
+	.par_stb_o(drive_stb_o),
+
 	.clk_sys(clk_sys),
 
-	.rom_addr(ioctl_addr[13:0]),
-	.rom_data(ioctl_data),
-	.rom_wr((ioctl_index == 0) &&  ioctl_addr[14] && ioctl_download && ioctl_wr),
-	.rom_std(status[14]),
-
-	.disk_change(sd_change[1]),
-	.disk_readonly(disk_readonly),
-	.drive_num(1),
-
-	.iec_atn_i(c64_iec_atn | ~drive9),
-	.iec_data_i(c64_iec_data | ~drive9),
-	.iec_clk_i(c64_iec_clk | ~drive9),
-	.iec_data_o(c1541_2_iec_data),
-	.iec_clk_o(c1541_2_iec_clk),
-	.iec_reset_i(~reset_n),
-
-	.sd_lba(sd_lba2),
-	.sd_rd(sd_rd[1]),
-	.sd_wr(sd_wr[1]),
-	.sd_ack(sd_ack[1]),
+	.sd_lba(sd_lba),
+	.sd_blk_cnt(sd_blk_cnt),
+	.sd_rd(sd_rd),
+	.sd_wr(sd_wr),
+	.sd_ack(sd_ack),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din(sd_buff_din2),
+	.sd_buff_din(sd_buff_din),
 	.sd_buff_wr(sd_buff_wr),
 
-	.led(c1541_2_led)
+	.rom_addr(load_rom ? (ioctl_addr[15:0] - 16'h4000) : {1'b1,ioctl_addr[14:0]}),
+	.rom_data(ioctl_data),
+	.rom_wr(((load_rom && ioctl_addr[16:14]) || load_c1581) && ioctl_download && ioctl_wr),
+	.rom_std(status[14])
 );
 
-reg ce_c1541;
-always @(negedge clk64) begin
+reg drive_ce;
+always @(posedge clk_sys) begin
 	int sum = 0;
 	int msum;
 	
-	msum <= ntsc ? 65454537 : 63055911;
+	msum <= ntsc ? 32727264 : 31527954;
 
-	ce_c1541 <= 0;
-	sum = sum + 32000000;
+	drive_ce <= 0;
+	sum = sum + 16000000;
 	if(sum >= msum) begin
 		sum = sum - msum;
-		ce_c1541 <= 1;
+		drive_ce <= 1;
 	end
 end
 
+wire disk_parport = ~status[44];
+
+reg disk_access;
+always @(posedge clk_sys) begin
+	reg c64_iec_clk_old, drive_iec_clk_old, drive_stb_i_old, drive_stb_o_old;
+	integer to = 0;
+
+	c64_iec_clk_old <= c64_iec_clk;
+	drive_iec_clk_old <= drive_iec_clk;
+	drive_stb_i_old <= drive_stb_i;
+	drive_stb_o_old <= drive_stb_o;
+	
+	if(((c64_iec_clk_old != c64_iec_clk) || (drive_iec_clk_old != drive_iec_clk)) || 
+		(disk_parport && ((drive_stb_i_old != drive_stb_i) || (drive_stb_o_old != drive_stb_o))))
+	begin
+		disk_access <= 1;
+		to <= 16000000; // 0.5s
+	end
+	else if(to) to <= to - 1;
+	else disk_access <= 0;
+end
 
 wire hsync;
 wire vsync;
@@ -1065,6 +1217,7 @@ wire vsync_out;
 video_sync sync
 (
 	.clk32(clk_sys),
+	.pause(c64_pause),
 	.hsync(hsync),
 	.vsync(vsync),
 	.ntsc(ntsc),
@@ -1112,17 +1265,14 @@ always @(posedge CLK_VIDEO) begin
 		if(HDMI_HEIGHT == 720)  vcrop <= 240;
 		if(HDMI_HEIGHT == 768)  vcrop <= 256; // NTSC mode has 250 visible lines only!
 		if(HDMI_HEIGHT == 800)  begin vcrop <= 200; wide <= vcrop_en; end
-		if(HDMI_HEIGHT == 1080) vcrop <= (ntsc | status[33]) ? 10'd216 : 10'd270;
+		if(HDMI_HEIGHT == 1080) vcrop <= 10'd216;
 		if(HDMI_HEIGHT == 1200) vcrop <= 240;
 	end
 end
 
-reg en1080p;
-always @(posedge CLK_VIDEO) en1080p <= (HDMI_WIDTH == 1920) && (HDMI_HEIGHT == 1080);
-
 
 wire [1:0] ar = status[5:4];
-wire vcrop_en = en1080p ? |status[33:32] : status[32];
+wire vcrop_en = status[32];
 wire vga_de;
 video_freak video_freak
 (
@@ -1134,6 +1284,17 @@ video_freak video_freak
 	.CROP_OFF(0),
 	.SCALE(status[31:30])
 );
+
+wire freeze_sync;
+reg freeze;
+always @(posedge clk_sys) begin
+	reg old_sync;
+	
+	old_sync <= freeze_sync;
+	if(old_sync ^ freeze_sync) freeze <= OSD_STATUS & status[42];
+end
+
+assign HDMI_FREEZE = freeze;
 
 video_mixer #(.GAMMA(1)) video_mixer
 (
@@ -1151,6 +1312,9 @@ video_mixer #(.GAMMA(1)) video_mixer
 	.VSync(vsync_out),
 	.HBlank(hblank),
 	.VBlank(vblank),
+
+	.HDMI_FREEZE(HDMI_FREEZE),
+	.freeze_sync(freeze_sync),
 
 	.CE_PIXEL(CE_PIXEL),
 	.VGA_R(VGA_R),
@@ -1172,58 +1336,29 @@ opl3 #(.OPLCLK(47291931)) opl_inst
 
 	.addr(c64_addr[4]),
 	.dout(opl_dout),
-	.we(~ram_we & IOF & opl_en & c64_addr[6] & ~c64_addr[5]),
+	.we(ram_we & IOF & opl_en & c64_addr[6] & ~c64_addr[5]),
 	.din(c64_data_out),
 
 	.sample_l(opl_out)
 );
-
-reg [31:0] ce_1m;
-always @(posedge clk_sys) ce_1m <= reset_n ? {ce_1m[30:0], ce_1m[31]} : 1;
 
 reg ioe_we, iof_we;
 always @(posedge clk_sys) begin
 	reg old_ioe, old_iof;
 
 	old_ioe <= IOE;
-	ioe_we <= ~old_ioe & IOE & ~ram_we;
+	ioe_we <= ~old_ioe & IOE & ram_we;
 
 	old_iof <= IOF;
-	iof_we <= ~old_iof & IOF & ~ram_we;
+	iof_we <= ~old_iof & IOF & ram_we;
 end
-
-wire sid2_we = (status[22:20]==1) ? ioe_we : (status[22:20]==4) ? iof_we : sid_we;
-wire sid2_oe = (status[22:20]==1) ? IOE    : (status[22:20]==4) ? IOF    : ~IOE & ~IOF;
-
-wire [17:0] audio6581_r;
-wire  [7:0] data_6581;
-sid_top sid_6581
-(
-	.clock(clk_sys),
-	.reset(~reset_n),
-	.start_iter(ce_1m[31]),
-
-	.addr(c64_addr[4:0]),
-	.wren(sid2_we),
-	.wdata(c64_data_out),
-	.rdata(data_6581),
-
-	.extfilter_en(1),
-	.cfg(status[39:37]),
-	.sample(audio6581_r),
-
-	.ld_clk(clk_sys),
-	.ld_addr(sid_ld_addr),
-	.ld_data(sid_ld_data),
-	.ld_wr(sid_ld_wr)
-);
 
 reg [11:0] sid_ld_addr = 0;
 reg [15:0] sid_ld_data = 0;
 reg        sid_ld_wr   = 0;
 always @(posedge clk_sys) begin
 	sid_ld_wr <= 0;
-	if(ioctl_wr && ioctl_index == 7 && ioctl_addr < 6144) begin
+	if(ioctl_wr && load_flt && ioctl_addr < 6144) begin
 		if(ioctl_addr[0]) begin
 			sid_ld_data[15:8] <= ioctl_data;
 			sid_ld_addr <= ioctl_addr[12:1];
@@ -1235,33 +1370,64 @@ always @(posedge clk_sys) begin
 	end
 end
 
-wire [17:0] audio8580_r;
-wire  [7:0] data_8580;
-sid8580 sid_8580
-(
-	.clk(clk_sys),
-	.reset(~reset_n),
-	.ce_1m(ce_1m[31]),
+//DigiMax
+reg [8:0] dac_l, dac_r;
+always @(posedge clk_sys) begin
+	reg [8:0] dac[4];
+	reg [3:0] act;
 
-	.addr(c64_addr[4:0]),
-	.we(sid2_we),
-	.data_in(c64_data_out),
-	.data_out(data_8580),
+	if(!status[41:40] || ~reset_n) begin
+		dac <= '{0,0,0,0};
+		act <= 0;
+	end
+	else if((status[41] ? iof_we : ioe_we) && ~c64_addr[2]) begin
+		dac[c64_addr[1:0]] <= c64_data_out;
+		if(c64_data_out) act[c64_addr[1:0]] <= 1;
+	end
 
-	.extfilter_en(1),
-	.audio_data(audio8580_r)
-);	
+	// guess mono/stereo/4-chan modes
+	if(act<2) begin
+		dac_l <= dac[0] + dac[0];
+		dac_r <= dac[0] + dac[0];
+	end
+	else if(act<3) begin
+		dac_l <= dac[1] + dac[1];
+		dac_r <= dac[0] + dac[0];
+	end
+	else begin
+		dac_l <= dac[1] + dac[2];
+		dac_r <= dac[0] + dac[3];
+	end
+end
 
-wire [17:0] audio_r = status[16] ? audio8580_r : audio6581_r;
+localparam [3:0] comp_f1 = 4;
+localparam [3:0] comp_a1 = 2;
+localparam       comp_x1 = ((32767 * (comp_f1 - 1)) / ((comp_f1 * comp_a1) - 1)) + 1; // +1 to make sure it won't overflow
+localparam       comp_b1 = comp_x1 * comp_a1;
+
+function [15:0] compr; input [15:0] inp;
+	reg [15:0] v, v1;
+	begin
+		v  = inp[15] ? (~inp) + 1'd1 : inp;
+		v1 = (v < comp_x1[15:0]) ? (v * comp_a1) : (((v - comp_x1[15:0])/comp_f1) + comp_b1[15:0]);
+		v  = v1;
+		compr = inp[15] ? ~(v-1'd1) : v;
+	end
+endfunction
 
 reg [15:0] alo,aro;
 always @(posedge clk_sys) begin
 	reg [16:0] alm,arm;
+	reg [15:0] cout;
+	reg [15:0] cin;
+	
+	cin  <= opl_out - {{3{opl_out[15]}},opl_out[15:3]};
+	cout <= compr(cin);
 
-	alm <= {opl_out[15],opl_out} + {audio_l[17],audio_l[17:2]} + {cass_snd, 10'd0};
-	arm <= {opl_out[15],opl_out} + {audio_r[17],audio_r[17:2]} + {cass_snd, 10'd0};
-	alo <= ($signed(alm) > $signed(17'd32767)) ? 16'd32767 : ($signed(alm) < $signed(-17'd32768)) ? -16'd32768 : alm[15:0];
-	aro <= ($signed(arm) > $signed(17'd32767)) ? 16'd32767 : ($signed(arm) < $signed(-17'd32768)) ? -16'd32768 : arm[15:0];
+	alm <= {cout[15],cout} + {audio_l[17],audio_l[17:2]} + {2'b0,dac_l,6'd0} + {cass_snd, 10'd0};
+	arm <= {cout[15],cout} + {audio_r[17],audio_r[17:2]} + {2'b0,dac_r,6'd0} + {cass_snd, 10'd0};
+	alo <= ^alm[16:15] ? {alm[16], {15{alm[15]}}} : alm[15:0];
+	aro <= ^arm[16:15] ? {arm[16], {15{arm[15]}}} : arm[15:0];
 end
 
 assign AUDIO_L = alo;
@@ -1274,14 +1440,13 @@ assign AUDIO_MIX = status[19:18];
 reg [24:0] tap_play_addr;
 reg [24:0] tap_last_addr;
 wire       tap_reset = ~reset_n | tape_download | status[23] | (cass_motor & ((tap_last_addr - tap_play_addr) < 80));
-reg        tap_wrreq;
+reg  [1:0] tap_wrreq;
 wire       tap_wrfull;
 wire       tap_finish;
 wire       tap_loaded = (tap_play_addr < tap_last_addr);
 reg        tap_play;
 wire       tap_play_btn = status[7];
 
-wire       load_tap = (ioctl_index == 6);
 wire       tape_download = ioctl_download & load_tap;
 
 always @(posedge clk_sys) begin
@@ -1292,7 +1457,7 @@ always @(posedge clk_sys) begin
 	tap_play_btnD <= tap_play_btn;
 	io_cycleD <= io_cycle;
 	tap_finishD <= tap_finish;
-	tap_wrreq <= 0;
+	tap_wrreq <= tap_wrreq << 1;
 
 	if(tap_reset) begin
 		//C1530 module requires one more byte at the end due to fifo early check.
@@ -1309,15 +1474,30 @@ always @(posedge clk_sys) begin
 		if (io_cycle & io_cycleD & read_cyc) begin
 			tap_play_addr <= tap_play_addr + 1'd1;
 			read_cyc <= 0;
-			tap_wrreq <= 1;
+			tap_wrreq[0] <= 1;
 		end
 	end
 end
+
+reg use_tape;
+always @(posedge clk_sys) begin
+	integer to = 0;
+
+	if(to) to <= to - 1;
+	else use_tape <= status[36];
+
+	if(tap_loaded | tap_play) begin
+		use_tape <= 1;
+		to <= 128000000; //4s
+	end
+end
+
 
 reg [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + (tap_play ? 4'd8 : 4'd1);
 wire tape_led = tap_loaded && (act_cnt[26] ? (~(tap_play & cass_motor) && act_cnt[25:18] > act_cnt[7:0]) : act_cnt[25:18] <= act_cnt[7:0]);
 
+wire cass_write;
 wire cass_motor;
 wire cass_run = ~cass_motor & tap_play;
 wire cass_snd = cass_run & status[11] & cass_do;
@@ -1332,12 +1512,115 @@ c1530 c1530
 	.cpu_freq(1000000),
 
 	.din(sdram_data),
-	.wr(tap_wrreq),
+	.wr(tap_wrreq[1]),
 	.full(tap_wrfull),
 	.empty(tap_finish),
 
 	.play(cass_run),
 	.dout(cass_do)
 );
+
+//------------- USER PORT -----------------
+
+wire ext_iec_en   = status[25];
+wire ext_iec_clk  = USER_IN[2] | ~ext_iec_en;
+wire ext_iec_data = USER_IN[4] | ~ext_iec_en;
+
+
+wire [7:0] pb_i, pb_o;
+wire       pa2_i, pa2_o;
+wire       pc2_n_o;
+wire       flag2_n_i;
+wire       sp2_i, sp2_o, sp1_o, sp1_i;
+wire       cnt2_i, cnt2_o, cnt1_o, cnt1_i;
+
+always_comb begin
+	pa2_i       = 1;
+	flag2_n_i   = 1;
+	sp1_i       = 1;
+	sp2_i       = 1;
+	cnt1_i      = 1;
+	cnt2_i      = 1;
+	pb_i        = 8'hFF;
+	UART_TXD    = 1;
+	UART_RTS    = 0;
+	UART_DTR    = 0;
+	drive_par_i = 8'hFF;
+	drive_stb_i = 1;
+	USER_OUT    = 8'hFF;
+	if(disk_parport & disk_access) begin
+		drive_par_i = pb_o;
+		drive_stb_i = pc2_n_o;
+		pb_i        = drive_par_o;
+		flag2_n_i   = drive_stb_o;
+	end
+	else if(status[43]) begin
+		UART_TXD  = pa2_o & uart_int;
+		flag2_n_i = uart_rxd;
+		sp2_i     = uart_rxd;
+		pb_i[0]   = uart_rxd;
+		UART_RTS  = ~pb_o[1] & uart_int;
+		UART_DTR  = ~pb_o[2] & uart_int;
+		pb_i[4]   = ~uart_dsr;
+		pb_i[6]   = ~uart_cts;
+		pb_i[7]   = ~uart_dsr;
+
+		USER_OUT[1] = pa2_o | uart_int;
+
+		if(~status[51]) begin
+			UART_TXD = pa2_o & sp1_o & uart_int;
+			pb_i[7]  = cnt2_o;
+			cnt2_i   = pb_o[7];
+
+			USER_OUT[1] = (pa2_o & sp1_o) | uart_int;
+		end
+	end else if (status[25]) begin
+		USER_OUT[2] = (c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en;
+		USER_OUT[3] = (reset_n & ~status[6]) | ~ext_iec_en;
+		USER_OUT[4] = (c64_iec_data & drive_iec_data_o) | ~ext_iec_en;
+		USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
+		USER_OUT[6] = '1;
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end else if (JOY_FLAG[1]) begin
+		USER_OUT[0] = JOY_LOAD;
+		USER_OUT[1] = JOY_CLK;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = 1'b1;
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end else if (JOY_FLAG[2]) begin
+		USER_OUT[0] = JOY_MDSEL;
+		USER_OUT[1] = 1'b1;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = JOY_SPLIT;
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end else begin
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end
+end
+
+wire uart_int = ~status[33];
+
+reg uart_rxd, uart_dsr, uart_cts;
+always @(posedge clk_sys) begin
+	reg rxd1, rxd2, dsr1, dsr2, cts1, cts2;
+
+	rxd1 <= uart_int ? UART_RXD : USER_IN[0]; rxd2 <= rxd1; if(rxd1 == rxd2) uart_rxd <= rxd2;
+	cts1 <= UART_CTS & uart_int; cts2 <= cts1; if(cts1 == cts2) uart_cts <= cts2;
+	dsr1 <= UART_DSR & uart_int; dsr2 <= dsr1; if(dsr1 == dsr2) uart_dsr <= dsr2;
+end
+
+wire rtcF83_sda;
+rtcF83 #(16000000, 0) rtcF83
+(
+	.clk(clk_sys),
+	.ce(drive_ce),
+	.reset(~reset_n | use_tape),
+	.RTC(RTC),
+	.scl_i(cass_write),
+	.sda_i(cass_motor),
+	.sda_o(rtcF83_sda)
+);
+
+wire cass_rtc = ~(rtcF83_sda & cass_motor);
 
 endmodule

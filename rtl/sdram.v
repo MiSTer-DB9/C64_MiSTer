@@ -31,6 +31,7 @@ module sdram (
 	output 				sd_ras,     // row address select
 	output 				sd_cas,     // columns address select
 	output 				sd_clk,
+	output 		[1:0]	sd_dqm,
 
 	// cpu/chipset interface
 	input 		 		init,			// init signal after FPGA config to initialize RAM
@@ -38,7 +39,7 @@ module sdram (
 	
 	input      [24:0] addr,       // 25 bit byte address
 	input      [ 7:0] din,
-	output reg [ 7:0]	dout,
+	output     [ 7:0]	dout,
 
 	input 		 		refresh,    // refresh cycle
 	input 		 		ce,         // cpu/chipset access
@@ -46,7 +47,7 @@ module sdram (
 );
 
 // no burst configured
-localparam RASCAS_DELAY   = 3'd1;   // tRCD>=20ns -> 2 cycles@64MHz
+localparam RASCAS_DELAY   = 3'd2;   // tRCD>=20ns -> 2 cycles@64MHz
 localparam BURST_LENGTH   = 3'b000; // 000=none, 001=2, 010=4, 011=8
 localparam ACCESS_TYPE    = 1'b0;   // 0=sequential, 1=interleaved
 localparam CAS_LATENCY    = 3'd2;   // 2/3 allowed
@@ -59,9 +60,9 @@ localparam MODE = { 3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, B
 // ------------------------ cycle state machine ------------------------
 // ---------------------------------------------------------------------
 
-localparam STATE_IDLE      = 3'd0;   // first state in cycle
 localparam STATE_CMD_START = 3'd0;   // state in which a new command can be started
-localparam STATE_CMD_CONT  = STATE_CMD_START  + RASCAS_DELAY; // 2 command can be continued
+localparam STATE_CMD_CONT  = STATE_CMD_START  + RASCAS_DELAY; // command can be continued
+localparam STATE_READ      = STATE_CMD_CONT + CAS_LATENCY + 1'd1;
 localparam STATE_LAST      = 3'd7;   // last state in cycle
 
 reg [2:0] q /* synthesis noprune */;
@@ -70,12 +71,9 @@ always @(posedge clk) begin
 	last_ce <= ce;
 	last_refresh <= refresh;
 
-	// start a new cycle in rising edge of ce or refresh
-	if((ce && !last_ce) || (refresh && !last_refresh))
-		q <= 3'd1;
-	
-	if(q != 0)
-			q <= q + 3'd1;
+	// start a new cycle in rising edge of ce
+	if(ce && !last_ce) q <= 3'd1;
+	if(q || reset) q <= q + 3'd1;
 end
 
 // ---------------------------------------------------------------------
@@ -84,11 +82,12 @@ end
 
 // wait 1ms (32 clkref cycles) after FPGA config is done before going
 // into normal operation. Initialize the ram in the last 16 reset cycles (cycles 15-0)
+initial reset = 5'h1f;
+
 reg [4:0] reset;
 always @(posedge clk) begin
 	if(init)	reset <= 5'h1f;
-	else if((q == STATE_LAST) && (reset != 0))
-		reset <= reset - 5'd1;
+	else if((q == STATE_LAST) && (reset != 0)) reset <= reset - 5'd1;
 end
 
 // ---------------------------------------------------------------------
@@ -112,30 +111,48 @@ assign sd_cs  = 0;
 assign sd_ras = sd_cmd[2];
 assign sd_cas = sd_cmd[1];
 assign sd_we  = sd_cmd[0];
-wire [12:0] reset_addr = (reset == 13)?13'b0010000000000:MODE;
-wire [12:0] run_addr = (q == STATE_CMD_START)?addr[20:8]:{ 4'b0010, addr[23], addr[7:0]};
+assign sd_dqm = sd_addr[12:11];
+
+reg bt;
+reg [15:0] dout_r;
+
+assign dout = bt ? dout_r[15:8] : dout_r[7:0];
 
 always @(posedge clk) begin
+	reg [8:0] caddr;
+
 	sd_cmd  <= CMD_NOP;
-	sd_addr <= (reset != 0)?reset_addr:run_addr;
-	sd_ba   <= addr[22:21];
 	sd_data <= 16'bZ;
 
-	dout <= sd_data[7:0];
+	if(q == STATE_READ) dout_r <= sd_data;
 
-	if(reset != 0) begin
-		if(q == STATE_IDLE) begin
-			if(reset == 13)  sd_cmd <= CMD_PRECHARGE;
-			if(reset ==  2)  sd_cmd <= CMD_LOAD_MODE;
+	if(reset) begin
+		sd_ba <= 0;
+		if(q == STATE_CMD_START) begin
+			if(reset == 13) begin
+				sd_cmd <= CMD_PRECHARGE;
+				sd_addr <= 13'b0010000000000;
+			end
+			if(reset == 2) begin
+				sd_cmd <= CMD_LOAD_MODE;
+				sd_addr <= MODE;
+			end
 		end
-	end else begin
-		if(q == STATE_IDLE) begin
-			if(ce && !last_ce)           sd_cmd <= CMD_ACTIVE;
-			if(refresh && !last_refresh) sd_cmd <= CMD_AUTO_REFRESH;
-		end else if((q == STATE_CMD_CONT)&&(!refresh)) begin
-			if(we)		sd_cmd <= CMD_WRITE;
-			else if(ce) sd_cmd <= CMD_READ;
-			if(we)     sd_data <= {din, din};
+	end
+	else begin
+		if(refresh && !last_refresh) sd_cmd <= CMD_AUTO_REFRESH;
+
+		if(ce && !last_ce) begin
+			sd_cmd  <= CMD_ACTIVE;
+			sd_ba   <= addr[22:21];
+			sd_addr <= addr[20:8];
+			caddr   <= {addr[23], addr[7:0]};
+			bt      <= addr[24];
+		end
+		if(q == STATE_CMD_CONT) begin
+			if(we) sd_data <= {din, din};
+			sd_cmd  <= we ? CMD_WRITE : CMD_READ;
+			sd_addr <= {~bt & we, bt & we, 2'b10, caddr};
 		end
 	end
 end

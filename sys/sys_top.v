@@ -139,9 +139,9 @@ wire SD_MISO = mcp_sdcd ? sd_miso : SD_SPI_MISO;
 	assign SDIO_DAT[3]  = SW[3] ? 1'bZ  : SD_CS;
 	assign SDIO_CLK     = SW[3] ? 1'bZ  : SD_CLK;
 	assign SDIO_CMD     = SW[3] ? 1'bZ  : SD_MOSI;
-	//assign SD_SPI_CS    = mcp_sdcd ? ((~VGA_EN & sog & ~cs1) ? 1'b1 : 1'bZ) : SD_CS;
+//	assign SD_SPI_CS    = mcp_sdcd ? ((~VGA_EN & sog & ~cs1) ? 1'b1 : 1'bZ) : SD_CS;
 `else
-	//assign SD_SPI_CS    = mcp_sdcd ? 1'bZ : SD_CS;
+//	assign SD_SPI_CS    = mcp_sdcd ? 1'bZ : SD_CS;
 `endif
 
 assign SD_SPI_CLK  = mcp_sdcd ? 1'bZ : SD_CLK;
@@ -202,8 +202,7 @@ always @(posedge FPGA_CLK2_50) begin
 		if(&deb_user) btn_user <= 1;
 		if(!deb_user) btn_user <= 0;
 
-		//deb_osd <= {deb_osd[6:0], btn_o | ~KEY[0]};
-deb_osd <= {deb_osd[6:0], btn_o | user_osd | ~KEY[0]};
+		deb_osd <= {deb_osd[6:0], btn_o | user_osd | ~KEY[0]};
 		if(&deb_osd) btn_osd <= 1;
 		if(!deb_osd) btn_osd <= 0;
 	end
@@ -619,6 +618,7 @@ wire         vbuf_write;
 
 wire  [23:0] hdmi_data;
 wire         hdmi_vs, hdmi_hs, hdmi_de, hdmi_vbl;
+wire         freeze;
 
 `ifndef MISTER_DEBUG_NOHDMI
 wire clk_hdmi  = hdmi_clk_out;
@@ -640,7 +640,7 @@ ascal
 (
 	.reset_na (~reset_req),
 	.run      (1),
-	.freeze   (0),
+	.freeze   (freeze),
 
 	.i_clk    (clk_ihdmi),
 	.i_ce     (ce_hpix),
@@ -797,7 +797,7 @@ always @(posedge clk_vid) begin
 
 	hdmi_height <= (VSET && (VSET < HEIGHT)) ? VSET : HEIGHT;
 	hdmi_width  <= (HSET && (HSET < WIDTH))  ? HSET : WIDTH;
-	
+
 	if(!ARY) begin
 		if(ARX == 1) begin
 			arx <= arc1x[11:0];
@@ -820,7 +820,7 @@ always @(posedge clk_vid) begin
 		ary <= ARY[11:0];
 		xy  <= ARX[12] | ARY[12];
 	end
-
+	
 	ar_md_start <= 0;
 	state <= state + 1'd1;
 	case(state)
@@ -829,7 +829,7 @@ always @(posedge clk_vid) begin
 				vmini <= LFB_VMIN;
 				hmaxi <= LFB_HMAX;
 				vmaxi <= LFB_VMAX;
-				state<= 0;
+				state <= 0;
 			end
 			else if(FREESCALE || !arx || !ary) begin
 				wcalc <= hdmi_width;
@@ -1426,7 +1426,6 @@ assign user_in[5] = SW[1] | USER_IO[5];
 assign user_in[6] =         USER_IO[6];
 assign user_in[7] =         USER_IO[7];
 
-
 ///////////////////  User module connection ////////////////////////////
 
 wire        clk_sys;
@@ -1463,14 +1462,14 @@ wire  [7:0] user_out, user_in;
 wire  [1:0] user_mode;
 wire        user_osd;
 
-	assign clk_ihdmi= clk_vid;
-	assign ce_hpix  = ce_pix;
-	assign hr_out   = r_out;
-	assign hg_out   = g_out;
-	assign hb_out   = b_out;
-	assign hhs_fix  = hs_fix;
-	assign hvs_fix  = vs_fix;
-	assign hde_emu  = de_emu;
+assign clk_ihdmi= clk_vid;
+assign ce_hpix  = ce_pix;
+assign hr_out   = r_out;
+assign hg_out   = g_out;
+assign hb_out   = b_out;
+assign hhs_fix  = hs_fix;
+assign hvs_fix  = vs_fix;
+assign hde_emu  = de_emu;
 
 wire uart_dtr;
 wire uart_dsr;
@@ -1527,6 +1526,7 @@ emu emu
 
 	.HDMI_WIDTH(direct_video ? 12'd0 : hdmi_width),
 	.HDMI_HEIGHT(direct_video ? 12'd0 : hdmi_height),
+	.HDMI_FREEZE(freeze),
 
 	.CLK_VIDEO(clk_vid),
 	.CE_PIXEL(ce_pix),
@@ -1623,8 +1623,8 @@ emu emu
 	.UART_DSR(uart_dtr),
 
 	.USER_OSD(user_osd),
-.USER_MODE(user_mode),
-.USER_OUT(user_out),
+	.USER_MODE(user_mode),
+	.USER_OUT(user_out),
 	.USER_IN(user_in)
 );
 
