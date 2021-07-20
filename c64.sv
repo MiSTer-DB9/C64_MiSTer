@@ -190,8 +190,8 @@ assign LED_USER   = |drive_led | ioctl_download | tape_led;
 assign BUTTONS    = 0;
 assign VGA_SCALER = 0;
 
-wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
-wire   [2:0] JOY_FLAG = {db9md_ena,~db9md_ena,1'b0};   //Assign 3 bits of status (31:29) o (63:61)
+wire         CLK_JOY = CLK_50M & ~ext_iec_en & ~status[43];         //Assign clock between 40-50Mhz
+wire   [2:0] JOY_FLAG = ~ext_iec_en & ~status[43] ? {db9md_ena,~db9md_ena,1'b0} : 3'b000;   //Assign 3 bits of status (31:29) o (63:61)
 wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
 wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
 wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
