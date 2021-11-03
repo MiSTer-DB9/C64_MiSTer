@@ -171,8 +171,10 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
-	input   [6:0] USER_IN,
-	output  [6:0] USER_OUT,
+	output        USER_OSD,
+	output  [1:0] USER_MODE,
+	input   [7:0] USER_IN,
+	output  [7:0] USER_OUT,
 
 	input         OSD_STATUS
 );
@@ -185,6 +187,56 @@ assign LED_POWER  = 0;
 assign LED_USER   = |drive_led | ioctl_download | tape_led;
 assign BUTTONS    = 0;
 assign VGA_SCALER = 0;
+
+//JOY DB9
+wire         CLK_JOY = CLK_50M & ~ext_iec_en & ~status[43];         //Assign clock between 40-50Mhz
+wire   [2:0] JOY_FLAG = ~ext_iec_en & ~status[43] ? {db9md_ena,~db9md_ena,1'b0} : 3'b000;   //Assign 3 bits of status (31:29) o (63:61)
+wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
+wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
+wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
+//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111011,JOY_CLK,JOY_LOAD} : '1;
+assign       USER_MODE = JOY_FLAG[2:1] ;
+assign       USER_OSD  = JOY_DB1[10] & JOY_DB1[6];
+
+reg  db9md_ena=1'b0;
+reg  db9_1p_ena=1'b0,db9_2p_ena=1'b0;
+wire db9_status = db9md_ena ? 1'b1 : USER_IN[7]; //Falta Comprobar que no este activo ni el puerto serie ni el iec_ext
+always @(posedge clk_sys)                        // status[25] | status[43] 
+ begin
+	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1; 
+   if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
+	if(~JOYDB9MD_1[2] && JOYDB9MD_2[2] || JOYDB15_2[2]) db9_2p_ena <= 1'b1; //Se niega el del player 1 por si no hay Splitter que no se duplique
+ end
+
+wire [15:0] JOY_DB1 = db9md_ena ? JOYDB9MD_1 : JOYDB15_1;
+wire [15:0] JOY_DB2 = db9md_ena ? JOYDB9MD_2 : JOYDB15_2;
+
+reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
+joy_db9md joy_db9md
+(
+  .clk       ( CLK_JOY    ), //40-50MHz
+  .joy_split ( JOY_SPLIT  ),
+  .joy_mdsel ( JOY_MDSEL  ),
+  .joy_in    ( JOY_MDIN   ),
+  .joystick1 ( JOYDB9MD_1 ),
+  .joystick2 ( JOYDB9MD_2 )	  
+);
+
+reg [15:0] JOYDB15_1,JOYDB15_2;
+joy_db15 joy_db15
+(
+  .clk       ( CLK_JOY   ), //48MHz
+  .JOY_CLK   ( JOY_CLK   ),
+  .JOY_DATA  ( JOY_DATA  ),
+  .JOY_LOAD  ( JOY_LOAD  ),
+  .joystick1 ( JOYDB15_1 ),
+  .joystick2 ( JOYDB15_2 )	  
+);
+
+wire [15:0] joyA = db9_1p_ena ? JOY_DB1 : joyA_USB;
+wire [15:0] joyB = db9_2p_ena ? JOY_DB2 : db9_1p_ena ? joyA_USB : joyB_USB;
+wire [15:0] joyC = db9_2p_ena ? joyA_USB : db9_1p_ena ? joyB_USB : joyC_USB;
+wire [15:0] joyD = db9_2p_ena ? joyB_USB : db9_1p_ena ? joyC_USB : joyD_USB;
 
 // Status Bit Map:
 //              Upper                          Lower
@@ -385,7 +437,7 @@ always @(posedge clk_sys) begin
 	end
 end
 
-wire [15:0] joyA,joyB,joyC,joyD;
+wire [15:0] joyA_USB,joyB_USB,joyC_USB,joyD_USB;
 wire [15:0] joy = joyA | joyB | joyC | joyD;
 
 wire [63:0] status;
@@ -424,10 +476,11 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(2), .BLKSZ(1)) hps_io
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 
-	.joystick_0(joyA),
-	.joystick_1(joyB),
-	.joystick_2(joyC),
-	.joystick_3(joyD),
+	.joy_raw(JOY_DB1[5:0] | JOY_DB2[5:0]),
+	.joystick_0(joyA_USB),
+	.joystick_1(joyB_USB),
+	.joystick_2(joyC_USB),
+	.joystick_3(joyD_USB),
 
 	.paddle_0(pd1),
 	.paddle_1(pd2),
@@ -1160,12 +1213,11 @@ wire ext_iec_en   = status[25];
 wire ext_iec_clk  = USER_IN[2] | ~ext_iec_en;
 wire ext_iec_data = USER_IN[4] | ~ext_iec_en;
 
-assign USER_OUT[2] = (c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en;
-assign USER_OUT[3] = (reset_n & ~status[6]) | ~ext_iec_en;
-assign USER_OUT[4] = (c64_iec_data & drive_iec_data_o) | ~ext_iec_en;
-assign USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
-assign USER_OUT[6] = '1;
-
+//assign USER_OUT[2] = (c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en;
+//assign USER_OUT[3] = (reset_n & ~status[6]) | ~ext_iec_en;
+//assign USER_OUT[4] = (c64_iec_data & drive_iec_data_o) | ~ext_iec_en;
+//assign USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
+//assign USER_OUT[6] = '1;
 
 wire hsync;
 wire vsync;
@@ -1510,9 +1562,8 @@ always_comb begin
 	UART_DTR    = 0;
 	drive_par_i = 8'hFF;
 	drive_stb_i = 1;
-	USER_OUT[0] = 1;
-	USER_OUT[1] = 1;
-
+	USER_OUT    = 8'hFF;
+	
 	if(disk_parport & disk_access) begin
 		drive_par_i = pb_o;
 		drive_stb_i = pc2_n_o;
@@ -1539,8 +1590,26 @@ always_comb begin
 
 			USER_OUT[1] = (pa2_o & sp1_o) | uart_int;
 		end
-	end
-	else begin
+	end else if(ext_iec_en) begin
+		USER_OUT[2] = (c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en;
+		USER_OUT[3] = (reset_n & ~status[6]) | ~ext_iec_en;
+		USER_OUT[4] = (c64_iec_data & drive_iec_data_o) | ~ext_iec_en;
+		USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
+		USER_OUT[6] = '1;
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end else if (JOY_FLAG[1]) begin
+		USER_OUT[0] = JOY_LOAD;
+		USER_OUT[1] = JOY_CLK;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = 1'b1;
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end else if (JOY_FLAG[2]) begin
+		USER_OUT[0] = JOY_MDSEL;
+		USER_OUT[1] = 1'b1;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = JOY_SPLIT;
+		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	end else begin
 		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
 	end
 end
