@@ -84,9 +84,9 @@ end
 //----Z  YXM SACB UDLR
 //SALIDA joystick[11:0]:
 //BA9876543210
-//MSZYXCBAUDLR	
-assign joystick1 = ~{joyMDdat1[8],joyMDdat1[7],joyMDdat1[11:9],joyMDdat1[5:4],joyMDdat1[6],joyMDdat1[3:0]};
-assign joystick2 = ~{joyMDdat2[8],joyMDdat2[7],joyMDdat2[11:9],joyMDdat2[5:4],joyMDdat2[6],joyMDdat2[3:0]};
+//MSZYXABCUDLR	//Cambiado el boton 1 por el C para compatibildad con joysticks de 1 boton que nos son de MD
+assign joystick1 = ~{joyMDdat1[8],joyMDdat1[7],joyMDdat1[11:9],joyMDdat1[6:0]};
+assign joystick2 = ~{joyMDdat2[8],joyMDdat2[7],joyMDdat2[11:9],joyMDdat2[6:0]};
 assign joy_mdsel = joyMDsel;
 assign joy_split = joySplit;
 
