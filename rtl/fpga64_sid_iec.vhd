@@ -70,6 +70,7 @@ port(
 	turbo_speed : in  std_logic_vector(1 downto 0);
 
 	-- VGA/SCART interface
+	vic_variant : in  std_logic_vector(1 downto 0);
 	ntscMode    : in  std_logic;
 	hsync       : out std_logic;
 	vsync       : out std_logic;
@@ -125,6 +126,7 @@ port(
 	sid_ld_addr : in  std_logic_vector(11 downto 0);
 	sid_ld_data : in  std_logic_vector(15 downto 0);
 	sid_ld_wr   : in  std_logic;
+	sid_digifix : in  std_logic;
 	
 	-- USER
 	pb_i        : in  unsigned(7 downto 0);
@@ -552,7 +554,8 @@ port map (
 	mode6567old => '0',
 	mode6567R8 => ntscMode,
 	mode6572 => '0',
-	
+	variant => vic_variant,
+
 	turbo_en => turbo_en,
 	turbo_state => turbo_state,
 	
@@ -662,10 +665,10 @@ port map (
 	audio_l => audio_l,
 	audio_r => audio_r,
 
-	ext_in_l(17) => sid_ver(0),
+	ext_in_l(17) => sid_ver(0) and sid_digifix,
 	ext_in_l(16 downto 0) => (others => '0'),
 
-	ext_in_r(17) => sid_ver(1),
+	ext_in_r(17) => sid_ver(1) and sid_digifix,
 	ext_in_r(16 downto 0) => (others => '0'),
 
 	filter_en => sid_filter,
