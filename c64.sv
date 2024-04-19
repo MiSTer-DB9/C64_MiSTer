@@ -185,7 +185,7 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign LED_DISK   = 0;
 assign LED_POWER  = 0;
-assign LED_USER   = |drive_led | ioctl_download | tape_led;
+assign LED_USER   = |drive_led | ioctl_download | tape_led | ~disk_ready;
 assign BUTTONS    = 0;
 assign VGA_DISABLE = 0;
 assign VGA_SCALER = 0;
@@ -245,7 +245,7 @@ wire [15:0] joyD = db9_2p_ena ? joyB_USB : db9_1p_ena ? joyC_USB : joyD_USB;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XX  X  XXXXXXXXXXXXXXXXXXXXXX
+// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXX  XXXXXXXXXXXXXXXXXXXXXX
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -261,7 +261,8 @@ localparam CONF_STR = {
 	"-;",
 
 	"P1,Audio & Video;", 
-	"P1O[2],Video Standard,PAL,NTSC;",
+ 	"P1O[2],Video Standard,PAL,NTSC;",
+	"P1O[35:34],VIC-II,656x,856x,Early 856x;",
 	"P1O[5:4],Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"P1O[10:8],Scandoubler Fx,None,HQ2x-320,HQ2x-160,CRT 25%,CRT 50%,CRT 75%;",
 	"d1P1O[32],Vertical Crop,No,Yes;",
@@ -274,6 +275,7 @@ localparam CONF_STR = {
 	"D4D8P1O[72:70],Left Fc Offset,0,1,2,3,4,5;",
 	"D5D9P1O[75:73],Right Fc Offset,0,1,2,3,4,5;",
 	"P1O[22:20],Right SID Port,Same,DE00,D420,D500,DF00;",
+	"P1O[37],8580 Digifix,On,Off;",
 	"P1FC7,FLT,Load Custom Filters;",
 	"P1-;",
 	"P1O[12],Sound Expander,Disabled,OPL2;",
@@ -294,7 +296,7 @@ localparam CONF_STR = {
 	"P2O[51],RS232 mode,UP9600,VIC-1011;",
 	"P2O[33],RS232 connection,Internal,External;",
 	"P2O[36],Real-Time Clock,Auto,Disabled;",
-	"P2O[45],CIA Model,6526,8521;",
+	"P2O[45],CIA,6526,8521;",
 	"P2-;",
 	"P2O[27:26],Pot 1/2,Joy 1 Fire 2/3,Mouse,Paddles 1/2;",
 	"P2O[29:28],Pot 3/4,Joy 2 Fire 2/3,Mouse,Paddles 3/4;",
@@ -931,7 +933,7 @@ always @(posedge clk_sys) begin
 	end
 	else begin
 		to <= 0;
-		key <= ps2_key;
+		key <= {ps2_key[10], ps2_key[9] & disk_ready, ps2_key[8:0]};
 	end
 	if(start_strk & ~status[50]) begin
 		act <= 1;
@@ -1006,6 +1008,7 @@ fpga64_sid_iec fpga64
 	.ramCE(ram_ce),
 	.ramWE(ram_we),
 
+	.vic_variant(status[35:34]),
 	.ntscmode(ntsc),
 	.hsync(hsync),
 	.vsync(vsync),
@@ -1062,6 +1065,7 @@ fpga64_sid_iec fpga64
 	.sid_cfg({status[68:67],status[65:64]}),
 	.sid_fc_off_l(status[66] ? (13'h600 - {status[72:70],7'd0}) : 13'd0),
 	.sid_fc_off_r(status[69] ? (13'h600 - {status[75:73],7'd0}) : 13'd0),
+	.sid_digifix(~status[37]),
 	.audio_l(audio_l),
 	.audio_r(audio_r),
 
@@ -1128,6 +1132,7 @@ wire       drive_iec_data_o;
 wire       drive_reset = ~reset_n | status[6] | (load_c1581 & ioctl_download);
 
 wire [1:0] drive_led;
+wire       disk_ready;
 
 reg [1:0] drive_mounted = 0;
 always @(posedge clk_sys) begin 
@@ -1157,6 +1162,7 @@ iec_drive iec_drive
 	.img_type(&ioctl_index[7:6] ? 2'b11 : 2'b01),
 
 	.led(drive_led),
+	.disk_ready(disk_ready),
 
 	.par_data_i(drive_par_i),
 	.par_stb_i(drive_stb_i),
