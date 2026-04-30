@@ -32,8 +32,13 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, 
 	input             clk_sys,
 	inout      [48:0] HPS_BUS,
 
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw input
 	input      [15:0] joy_raw,
+	// [MiSTer-DB9 END]
 	// buttons up to 32
+	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (per-customer SipHash MAC; UIO_DB9_KEY 0xFE)
+	output            saturn_unlocked,
+	// [MiSTer-DB9-Pro END]
 	output reg [31:0] joystick_0,
 	output reg [31:0] joystick_1,
 	output reg [31:0] joystick_2,
@@ -351,7 +356,9 @@ always@(posedge clk_sys) begin : uio_block
 
 			casex(cmd)
 				// Reading user_io raw joy
+				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw command handler
 				'h0f: io_dout <= joy_raw;
+				// [MiSTer-DB9 END]
 				// buttons and switches
 				'h01: cfg <= io_din;
 				'h02: if(byte_cnt==1) joystick_0[15:0] <= io_din; else joystick_0[31:16] <= io_din;
@@ -710,6 +717,23 @@ always@(posedge clk_sys) begin : fio_block
 		end
 	end
 end
+
+
+// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (40-byte UIO_DB9_KEY 0xFE bytestream)
+`include "db9_key_secret.vh"
+// `cmd` is declared inside the `uio_block` named always block, so reach
+// into it via SystemVerilog hierarchical name. Bare `cmd` would auto-
+// elaborate as an undriven 1-bit wire and the whole gate would be DCE'd.
+db9_key_gate #(
+	.MASTER_ROOT(`MASTER_ROOT)
+) u_db9_key_gate (
+	.clk             (clk_sys),
+	.cmd_db9         (uio_block.cmd == 16'hFE),
+	.byte_cnt        (byte_cnt[5:0]),
+	.io_din          (io_din),
+	.saturn_unlocked (saturn_unlocked)
+);
+// [MiSTer-DB9-Pro END]
 
 endmodule
 
