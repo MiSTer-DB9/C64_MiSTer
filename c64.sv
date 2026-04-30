@@ -175,13 +175,19 @@ module emu
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
 	output        USER_OSD,
-	output  [1:0] USER_MODE,
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: per-pin push-pull mask
+	output  [7:0] USER_PP,
+	// [MiSTer-DB9 END]
 	input   [7:0] USER_IN,
 	output  [7:0] USER_OUT,
 
 	input         OSD_STATUS
 );
 
+
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP default (port_batch replaces with USER_PP_DRIVE)
+assign USER_PP = USER_PP_DRIVE;
+// [MiSTer-DB9 END]
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
@@ -195,54 +201,55 @@ assign HDMI_BLACKOUT = 0;
 assign HDMI_BOB_DEINT = 0;
 
 //JOY DB9
-wire         CLK_JOY = CLK_50M & ~ext_iec_en & ~status[43];         //Assign clock between 40-50Mhz
-wire   [2:0] JOY_FLAG = ~ext_iec_en & ~status[43] ? {db9md_ena,~db9md_ena,1'b0} : 3'b000;   //Assign 3 bits of status (31:29) o (63:61)
-wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
-wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
-wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
-//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111011,JOY_CLK,JOY_LOAD} : '1;
-assign       USER_MODE = JOY_FLAG[2:1] ;
-assign       USER_OSD  = JOY_DB1[10] & JOY_DB1[6];
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
+wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
+wire   [1:0] joy_type        = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
+wire         joy_2p          = status[125];
+wire         joy_db9md_en    = (joy_type == 2'd2);
+wire         joy_db15_en     = (joy_type == 2'd3);
+wire         joy_any_en      = |joy_type;
+// [MiSTer-DB9 END]
 
-reg  db9md_ena=1'b0;
-reg  db9_1p_ena=1'b0,db9_2p_ena=1'b0;
-wire db9_status = db9md_ena ? 1'b1 : USER_IN[7]; //Falta Comprobar que no este activo ni el puerto serie ni el iec_ext
-always @(posedge clk_sys)                        // status[25] | status[43] 
- begin
-	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1; 
-   if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
-	if(~JOYDB9MD_1[2] && JOYDB9MD_2[2] || JOYDB15_2[2]) db9_2p_ena <= 1'b1; //Se niega el del player 1 por si no hay Splitter que no se duplique
- end
+// [MiSTer-DB9-Pro BEGIN] - Saturn key gate
+wire         saturn_unlocked;                   // driven by hps_io UIO_DB9_KEY (0xFE)
+// [MiSTer-DB9-Pro END]
 
-wire [15:0] JOY_DB1 = db9md_ena ? JOYDB9MD_1 : JOYDB15_1;
-wire [15:0] JOY_DB2 = db9md_ena ? JOYDB9MD_2 : JOYDB15_2;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper wires + instance
+wire   [7:0] USER_OUT_DRIVE;
+wire   [7:0] USER_PP_DRIVE;
+wire  [15:0] joydb_1, joydb_2;
+wire         joydb_1ena, joydb_2ena;
+wire  [15:0] joy_raw_payload;
 
-reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
-joy_db9md joy_db9md
-(
-  .clk       ( CLK_JOY    ), //40-50MHz
-  .joy_split ( JOY_SPLIT  ),
-  .joy_mdsel ( JOY_MDSEL  ),
-  .joy_in    ( JOY_MDIN   ),
-  .joystick1 ( JOYDB9MD_1 ),
-  .joystick2 ( JOYDB9MD_2 )	  
+joydb joydb (
+  .clk             ( CLK_JOY         ),
+  .USER_IN         ( USER_IN         ),
+  .joy_type        ( joy_type        ),
+  .joy_2p          ( joy_2p          ),
+  .saturn_unlocked ( saturn_unlocked ),
+  .USER_OUT_DRIVE  ( USER_OUT_DRIVE  ),
+  .USER_PP_DRIVE   ( USER_PP_DRIVE   ),
+  .USER_OSD        ( USER_OSD        ),
+  .joydb_1         ( joydb_1         ),
+  .joydb_2         ( joydb_2         ),
+  .joydb_1ena      ( joydb_1ena      ),
+  .joydb_2ena      ( joydb_2ena      ),
+  .joy_raw         ( joy_raw_payload )
 );
+// USER_OUT is driven inside the IEC/UART/JOY always_comb mux below — fork
+// joystick drive enters as `else if (joy_any_en) USER_OUT = USER_OUT_DRIVE;`.
 
-reg [15:0] JOYDB15_1,JOYDB15_2;
-joy_db15 joy_db15
-(
-  .clk       ( CLK_JOY   ), //48MHz
-  .JOY_CLK   ( JOY_CLK   ),
-  .JOY_DATA  ( JOY_DATA  ),
-  .JOY_LOAD  ( JOY_LOAD  ),
-  .joystick1 ( JOYDB15_1 ),
-  .joystick2 ( JOYDB15_2 )	  
-);
-
-wire [15:0] joyA = db9_1p_ena ? JOY_DB1 : joyA_USB;
-wire [15:0] joyB = db9_2p_ena ? JOY_DB2 : db9_1p_ena ? joyA_USB : joyB_USB;
-wire [15:0] joyC = db9_2p_ena ? joyA_USB : db9_1p_ena ? joyB_USB : joyC_USB;
-wire [15:0] joyD = db9_2p_ena ? joyB_USB : db9_1p_ena ? joyC_USB : joyD_USB;
+// Wrapper-driven joyA..joyD routing replaces the legacy DB9MD-vs-DB15 auto-
+// detect block (db9md_ena / db9_1p_ena / db9_2p_ena via JOYDB9MD_*/JOYDB15_*),
+// which referenced raw module outputs no longer exposed by the joydb wrapper.
+// User now selects the joystick type explicitly through the OSD (Off, Saturn,
+// DB9MD, DB15) at status[127:126]; the wrapper internally muxes raw outputs
+// and AND-gates the Saturn arm with saturn_unlocked.
+wire [15:0] joyA = joydb_1ena ? (OSD_STATUS? 16'b0 : {joydb_1[6:0]}) : joyA_USB;
+wire [15:0] joyB = joydb_2ena ? (OSD_STATUS? 16'b0 : {joydb_2[6:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
+wire [15:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
+wire [15:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
+// [MiSTer-DB9 END]
 
 // Status Bit Map:
 //              Upper                          Lower
@@ -324,6 +331,10 @@ localparam CONF_STR = {
 
 	"-;",
 	"O[3],Swap Joysticks,No,Yes;",
+	// [MiSTer-DB9-Pro BEGIN] - Saturn-first UserIO Joystick
+	"O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",
+	"O[125],UserIO Players,1 Player,2 Players;",
+	// [MiSTer-DB9-Pro END]
 	"-;",
 	"O[47:46],Turbo mode,Off,C128,Smart;",
 	"d6O[49:48],Turbo speed,2x,3x,4x;",
@@ -495,7 +506,12 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(2), .BLKSZ(1)) hps_io
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 
-	.joy_raw(JOY_DB1[5:0] | JOY_DB2[5:0]),
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw
+	.joy_raw(OSD_STATUS ? joy_raw_payload : 16'b0),
+	// [MiSTer-DB9 END]
+	// [MiSTer-DB9-Pro BEGIN] - Saturn key gate
+	.saturn_unlocked(saturn_unlocked),
+	// [MiSTer-DB9-Pro END]
 	.joystick_0(joyA_USB),
 	.joystick_1(joyB_USB),
 	.joystick_2(joyC_USB),
@@ -1688,18 +1704,11 @@ always_comb begin
 		USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
 		USER_OUT[6] = '1;
 		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
-	end else if (JOY_FLAG[1]) begin
-		USER_OUT[0] = JOY_LOAD;
-		USER_OUT[1] = JOY_CLK;
-		USER_OUT[6] = 1'b1;
-		USER_OUT[4] = 1'b1;
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 (and Saturn via wrapper) joystick drive arm
+	end else if (joy_any_en) begin
+		USER_OUT  = USER_OUT_DRIVE;
 		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
-	end else if (JOY_FLAG[2]) begin
-		USER_OUT[0] = JOY_MDSEL;
-		USER_OUT[1] = 1'b1;
-		USER_OUT[6] = 1'b1;
-		USER_OUT[4] = JOY_SPLIT;
-		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
+	// [MiSTer-DB9 END]
 	end else begin
 		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
 	end
