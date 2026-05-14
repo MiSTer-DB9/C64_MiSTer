@@ -25,176 +25,33 @@
 
 module emu
 (
-	//Master input clock
-	input         CLK_50M,
-
-	//Async reset from top-level module.
-	//Can be used as initial reset.
-	input         RESET,
-
-	//Must be passed to hps_io module
-	inout  [48:0] HPS_BUS,
-
-	//Base video clock. Usually equals to CLK_SYS.
-	output        CLK_VIDEO,
-
-	//Multiple resolutions are supported using different CE_PIXEL rates.
-	//Must be based on CLK_VIDEO
-	output        CE_PIXEL,
-
-	//Video aspect ratio for HDMI. Most retro systems have ratio 4:3.
-	//if VIDEO_ARX[12] or VIDEO_ARY[12] is set then [11:0] contains scaled size instead of aspect ratio.
-	output [12:0] VIDEO_ARX,
-	output [12:0] VIDEO_ARY,
-
-	output  [7:0] VGA_R,
-	output  [7:0] VGA_G,
-	output  [7:0] VGA_B,
-	output        VGA_HS,
-	output        VGA_VS,
-	output        VGA_DE,    // = ~(VBlank | HBlank)
-	output        VGA_F1,
-	output [1:0]  VGA_SL,
-	output        VGA_SCALER, // Force VGA scaler
-	output        VGA_DISABLE, // analog out is off
-
-	input  [11:0] HDMI_WIDTH,
-	input  [11:0] HDMI_HEIGHT,
-	output        HDMI_FREEZE,
-	output        HDMI_BLACKOUT,
-	output        HDMI_BOB_DEINT,
-
-`ifdef MISTER_FB
-	// Use framebuffer in DDRAM
-	// FB_FORMAT:
-	//    [2:0] : 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
-	//    [3]   : 0=16bits 565 1=16bits 1555
-	//    [4]   : 0=RGB  1=BGR (for 16/24/32 modes)
-	//
-	// FB_STRIDE either 0 (rounded to 256 bytes) or multiple of pixel size (in bytes)
-	output        FB_EN,
-	output  [4:0] FB_FORMAT,
-	output [11:0] FB_WIDTH,
-	output [11:0] FB_HEIGHT,
-	output [31:0] FB_BASE,
-	output [13:0] FB_STRIDE,
-	input         FB_VBL,
-	input         FB_LL,
-	output        FB_FORCE_BLANK,
-
-`ifdef MISTER_FB_PALETTE
-	// Palette control for 8bit modes.
-	// Ignored for other video modes.
-	output        FB_PAL_CLK,
-	output  [7:0] FB_PAL_ADDR,
-	output [23:0] FB_PAL_DOUT,
-	input  [23:0] FB_PAL_DIN,
-	output        FB_PAL_WR,
-`endif
-`endif
-
-	output        LED_USER,  // 1 - ON, 0 - OFF.
-
-	// b[1]: 0 - LED status is system status OR'd with b[0]
-	//       1 - LED status is controled solely by b[0]
-	// hint: supply 2'b00 to let the system control the LED.
-	output  [1:0] LED_POWER,
-	output  [1:0] LED_DISK,
-
-	// I/O board button press simulation (active high)
-	// b[1]: user button
-	// b[0]: osd button
-	output  [1:0] BUTTONS,
-
-	input         CLK_AUDIO, // 24.576 MHz
-	output [15:0] AUDIO_L,
-	output [15:0] AUDIO_R,
-	output        AUDIO_S,   // 1 - signed audio samples, 0 - unsigned
-	output  [1:0] AUDIO_MIX, // 0 - no mix, 1 - 25%, 2 - 50%, 3 - 100% (mono)
-
-	//ADC
-	inout   [3:0] ADC_BUS,
-
-	//SD-SPI
-	output        SD_SCK,
-	output        SD_MOSI,
-	input         SD_MISO,
-	output        SD_CS,
-	input         SD_CD,
-
-	//High latency DDR3 RAM interface
-	//Use for non-critical time purposes
-	output        DDRAM_CLK,
-	input         DDRAM_BUSY,
-	output  [7:0] DDRAM_BURSTCNT,
-	output [28:0] DDRAM_ADDR,
-	input  [63:0] DDRAM_DOUT,
-	input         DDRAM_DOUT_READY,
-	output        DDRAM_RD,
-	output [63:0] DDRAM_DIN,
-	output  [7:0] DDRAM_BE,
-	output        DDRAM_WE,
-
-	//SDRAM interface with lower latency
-	output        SDRAM_CLK,
-	output        SDRAM_CKE,
-	output [12:0] SDRAM_A,
-	output  [1:0] SDRAM_BA,
-	inout  [15:0] SDRAM_DQ,
-	output        SDRAM_DQML,
-	output        SDRAM_DQMH,
-	output        SDRAM_nCS,
-	output        SDRAM_nCAS,
-	output        SDRAM_nRAS,
-	output        SDRAM_nWE,
-
-`ifdef MISTER_DUAL_SDRAM
-	//Secondary SDRAM
-	//Set all output SDRAM_* signals to Z ASAP if SDRAM2_EN is 0
-	input         SDRAM2_EN,
-	output        SDRAM2_CLK,
-	output [12:0] SDRAM2_A,
-	output  [1:0] SDRAM2_BA,
-	inout  [15:0] SDRAM2_DQ,
-	output        SDRAM2_nCS,
-	output        SDRAM2_nCAS,
-	output        SDRAM2_nRAS,
-	output        SDRAM2_nWE,
-`endif
-
-	input         UART_CTS,
-	output        UART_RTS,
-	input         UART_RXD,
-	output        UART_TXD,
-	output        UART_DTR,
-	input         UART_DSR,
-
-	// Open-drain User port.
-	// 0 - D+/RX
-	// 1 - D-/TX
-	// 2..6 - USR2..USR6
-	// Set USER_OUT to 1 to read from USER_IN.
-	output        USER_OSD,
-	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: per-pin push-pull mask
-	output  [7:0] USER_PP,
-	// [MiSTer-DB9 END]
-	input   [7:0] USER_IN,
-	output  [7:0] USER_OUT,
-
-	input         OSD_STATUS
+	`include "sys/emu_ports.vh"
 );
-
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP default (port_batch replaces with USER_PP_DRIVE)
 assign USER_PP = USER_PP_DRIVE;
 // [MiSTer-DB9 END]
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
+wire [7:0]  drv_ddram_burstcnt;
+wire [28:0] drv_ddram_addr;
+wire        drv_ddram_rd;
+wire        drv_ddram_we;
+wire [63:0] drv_ddram_din;
+wire [7:0]  drv_ddram_be;
+
+assign DDRAM_CLK      = clk_sys;
+assign DDRAM_BURSTCNT = drv_ddram_burstcnt;
+assign DDRAM_ADDR     = drv_ddram_addr;
+assign DDRAM_RD       = drv_ddram_rd;
+assign DDRAM_WE       = drv_ddram_we;
+assign DDRAM_DIN      = drv_ddram_din;
+assign DDRAM_BE       = drv_ddram_be;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign LED_DISK   = 0;
 assign LED_POWER  = 0;
 assign LED_USER   = |drive_led | ioctl_download | ioctl_upload | ezfl_mod | tape_led | ~disk_ready;
-assign BUTTONS    = 0;
+reg    close_osd  = 0;
+assign BUTTONS    = {1'b0, close_osd};
 assign VGA_DISABLE = 0;
 assign VGA_SCALER = 0;
 assign HDMI_BLACKOUT = 0;
@@ -256,13 +113,18 @@ wire [15:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+//
+// 6     7         8         9         10        11        12
+// 45678901234567890123456789012345 67890123456789012345678901234567
+// XXXXXXXXXXXXXXXXXXXXX
 
 `include "build_id.v"
 localparam CONF_STR = {
 	"C64;UART9600:2400;",
 	"H7S0,D64G64T64D81,Mount #8;",
 	"H0S1,D64G64T64D81,Mount #9;",
+	"O[77:76],Mount Write Protected,Off,#8,#9,#8 & #9;",
 	"-;",
 	"F1,PRGCRTREUTAP;",
 	"hAdBR[61],Save cartridge;",
@@ -276,6 +138,7 @@ localparam CONF_STR = {
 	"P1,Audio & Video;", 
  	"P1O[2],Video Standard,PAL,NTSC;",
 	"P1O[35:34],VIC-II,656x,856x,Early 856x;",
+	"P1O[84:82],Palette,Colodore,Ultimate,Pepto-PAL,Vice,Vice6569R1,Vice6569R5,Vice8565R2,Lemon64;",
 	"P1O[5:4],Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"P1O[10:8],Scandoubler Fx,None,HQ2x-320,HQ2x-160,CRT 25%,CRT 50%,CRT 75%;",
 	"d1P1O[32],Vertical Crop,No,Yes;",
@@ -296,13 +159,9 @@ localparam CONF_STR = {
 	"P1O[19:18],Stereo Mix,None,25%,50%,100%;",
 
 	"P2,Hardware;", 
-	"P2O[58:57],Enable Drive #8,If Mounted,Always,Never;",
-	"P2O[56:55],Enable Drive #9,If Mounted,Always,Never;",
-	"P2O[44],Parallel port,Enabled,Disabled;",
-	"P2R[6],Reset Disk Drives;",
-	"P2-;",
 	"P2O[52],GeoRAM,Disabled,4MB;",
-	"P2O[54:53],REU,Disabled,512KB,2MB (512KB wrap),16MB;",
+	"P2O[54:53],REU,Disabled,512KB,2MB,16MB;",
+	"hCP2O[63],REU wrap,512KB,None;",
 	"P2-;",
 	"P2O[25],External IEC,Disabled,Enabled;",
 	"P2O[43],Expansion,Joysticks,RS232;",
@@ -329,6 +188,17 @@ localparam CONF_STR = {
 	"P2-;",
 	"P2O[15:14],System ROM,Loadable C64,Standard C64,C64GS,Japanese;",
 
+	"P3,Drives;",
+	"P3O[58:57],Enable Drive #8,If Mounted,Always,Never;",
+	"P3O[56:55],Enable Drive #9,If Mounted,Always,Never;",
+	"P3O[44],Parallel port,Enabled,Disabled;",
+	"P3O[86:85],Drives OSD,Activity Only,If Mounted,Debug,Off;",
+	"P3-;",
+	"P3O[80:78],Drive RPM    (G64),300.0,300.1,300.5,301.0,302.0,299.0,299.5,299.9;",
+	"P3O[81],Drive Wobble (G64),Off,On;",
+	"P3-;",
+	"P3R[6],Reset Disk Drives;",
+
 	"-;",
 	"O[3],Swap Joysticks,No,Yes;",
 	// [MiSTer-DB9-Pro BEGIN] - Saturn-first UserIO Joystick
@@ -346,7 +216,6 @@ localparam CONF_STR = {
 	"jp,A,B,Y,X|P,R,L;",
 	"V,v",`BUILD_DATE
 };
-
 
 wire pll_locked;
 wire clk_sys;
@@ -385,18 +254,38 @@ pll_cfg pll_cfg
 	.reconfig_from_pll(reconfig_from_pll)
 );
 
+reg ntsc_r = 0;
 always @(posedge CLK_50M) begin
 	reg ntscd = 0, ntscd2 = 0;
 	reg [2:0] state = 0;
-	reg ntsc_r;
+	reg [23:0] delay = 0;
+	reg osd_s1 = 0, osd_s2 = 0;
 
-	ntscd <= ntsc;
+	osd_s1 <= OSD_STATUS;
+	osd_s2 <= osd_s1;
+
+	// bringing ntsc_req into the CLK_50M domain
+	ntscd  <= ntsc_req;
 	ntscd2 <= ntscd;
 
 	cfg_write <= 0;
-	if(ntscd2 == ntscd && ntscd2 != ntsc_r) begin
+	close_osd <= 0;
+
+	if(ntscd2 != ntsc_r) begin
+	if(osd_s2 && delay < 24'd2500000) begin // 50ms pulse to close OSD
+	// Close OSD so that PAL/NTSC switch induced reset does not
+	// blank screen, if PAUSE when in OSD is enabled
+			close_osd <= 1;
+			delay <= delay + 1'd1;
+			end else if (delay < 24'd7500000) begin // 150ms total delay
+			delay <= delay + 1'd1;
+			end else begin
 		state <= 1;
 		ntsc_r <= ntscd2;
+			delay <= 0;
+			end
+	end else begin
+	delay <= 0;
 	end
 
 	if(!cfg_waitrequest) begin
@@ -428,17 +317,26 @@ always @(posedge CLK_50M) begin
 	end
 end
 
+reg ntsc_sys1 = 0, ntsc = 0;
 reg reset_n;
 reg reset_wait = 0;
+reg ntsc_prev = 0;
+
 always @(posedge clk_sys) begin
 	integer reset_counter;
 	reg old_download;
 	reg do_erase = 1;
 
+	// Bringing ntsc_r back into clk_sys domain
+	ntsc_sys1 <= ntsc_r;
+	ntsc <= ntsc_sys1;
+	// Detect pal/ntsc switch
+	ntsc_prev <= ntsc;
+
 	reset_n <= !reset_counter;
 	old_download <= ioctl_download;
 
-	if (RESET | status[0] | status[17] | buttons[1] | !pll_locked) begin
+	if (RESET | status[0] | status[17] | buttons[1] | !pll_locked | (ntsc_prev != ntsc)) begin
 		if(RESET) do_erase <= 1;
 		reset_counter <= 100000;
 	end
@@ -523,8 +421,7 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(2), .BLKSZ(1)) hps_io
 	.paddle_3(pd4),
 
 	.status(status),
-	.status_menumask({ezfl_mod || ezfl_save_en, cart_ezfl, ~status[69], ~status[66], status[58], |status[47:46], status[16], status[13], tap_loaded, 1'b0, |vcrop, status[56]}),
-	.buttons(buttons),
+	.status_menumask({status[54], ezfl_mod || ezfl_save_en, cart_ezfl, ~status[69], ~status[66], status[58], |status[47:46], status[16], status[13], tap_loaded, 1'b0, |vcrop, status[56]}), .buttons(buttons),
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus),
 
@@ -591,11 +488,10 @@ cartridge cartridge
 	.cart_id(cart_attached ? cart_id : status[52] ? 8'd99 : 8'd255),
 	.cart_exrom(cart_exrom),
 	.cart_game(cart_game),
-	.cart_bank_laddr(cart_bank_laddr),
-	.cart_bank_size(cart_bank_size),
+	.cart_bank_hi(cart_bank_hi),
+	.cart_bank_16k(cart_bank_16k),
 	.cart_bank_num(cart_bank_num),
-	.cart_bank_type(cart_bank_type),
-	.cart_bank_raddr(ioctl_load_addr),
+	.cart_bank_addr(ioctl_load_addr[20:13]),
 	.cart_bank_wr(cart_hdr_wr),
 	.cart_boot(~status[38]),
 
@@ -665,12 +561,14 @@ wire        reu_irq;
 
 wire        reu_oe  = IOF && reu_cfg;
 wire  [1:0] reu_cfg = status[54:53];
+wire        reu_wrap = ~status[63] & status[54];
 
 reu reu
 (
 	.clk(clk_sys),
 	.reset(~reset_n),
 	.cfg(reu_cfg),
+	.wrap(reu_wrap),
 
 	.dma_req(dma_req),
 
@@ -726,17 +624,14 @@ reg [24:0] ioctl_load_addr;
 reg        ioctl_req_wr;
 reg        ioctl_req_rd;
 
-reg [15:0] cart_id;
-reg [15:0] cart_bank_laddr;
-reg [15:0] cart_bank_size;
-reg [15:0] cart_bank_num;
-reg  [7:0] cart_bank_type;
-reg  [7:0] cart_exrom;
-reg  [7:0] cart_game;
+reg  [7:0] cart_id;
+reg        cart_bank_hi;
+reg        cart_bank_16k;
+reg  [7:0] cart_bank_num;
+reg        cart_exrom;
+reg        cart_game;
 reg        cart_attached = 0;
-reg  [3:0] cart_hdr_cnt;
 reg        cart_hdr_wr;
-reg [31:0] cart_blk_len;
 
 reg        force_erase;
 reg        erasing;
@@ -749,9 +644,9 @@ reg        io_cycle_we;
 reg [24:0] io_cycle_addr;
 reg  [7:0] io_cycle_data;
 
-localparam TAP_ADDR = 25'h0200000;
+localparam TAP_ADDR = 25'h0400000;
 localparam REU_ADDR = 25'h1000000;
-localparam CRT_ADDR = 25'h0100000;
+localparam CRT_ADDR = 25'h0200000;
 
 wire cart_ezfl = cart_attached && (cart_id == 32 || cart_id ==33);
 reg ext_crt = 0;
@@ -767,6 +662,9 @@ always @(posedge clk_sys) begin
 	reg  [7:0] inj_meminit_data;
 	reg  [2:0] rd_cyc;
 	reg        ioctl_rd_en;
+	reg [15:0] cart_blk_len;
+	reg  [3:0] cart_hdr_cnt;
+	reg  [7:0] cart_id_hi;
 
 	old_download <= ioctl_download;
 	io_cycleD <= io_cycle;
@@ -824,33 +722,18 @@ always @(posedge clk_sys) begin
 				cart_hdr_cnt <= 0;
 			end 
 
-			if (ioctl_addr == 8'h16) cart_id[15:8]   <= ioctl_data;
-			if (ioctl_addr == 8'h17) cart_id[7:0]    <= ioctl_data;
-			if (ioctl_addr == 8'h18) cart_exrom[7:0] <= ioctl_data;
-			if (ioctl_addr == 8'h19) cart_game[7:0]  <= ioctl_data;
+			if (ioctl_addr == 8'h16) cart_id_hi <= ioctl_data;
+			if (ioctl_addr == 8'h17) cart_id    <= cart_id_hi ? 8'd255 : ioctl_data;
+			if (ioctl_addr == 8'h18) cart_exrom <= ioctl_data[0];
+			if (ioctl_addr == 8'h19) cart_game  <= ioctl_data[0];
 
 			if (ioctl_addr >= 8'h40) begin
-				if (cart_blk_len == 0 & cart_hdr_cnt == 0) begin
-					cart_hdr_cnt <= 1;
-					if (ioctl_load_addr[12:0] != 0) begin
-						// align to 8KB boundary
-						ioctl_load_addr[12:0] <= 0;
-						ioctl_load_addr[24:13] <= ioctl_load_addr[24:13] + 1'b1;
-					end
-				end else if (cart_hdr_cnt != 0) begin
+				if (!cart_blk_len || cart_hdr_cnt) begin
 					cart_hdr_cnt <= cart_hdr_cnt + 1'b1;
-					if (cart_hdr_cnt == 4)  cart_blk_len[31:24]  <= ioctl_data;
-					if (cart_hdr_cnt == 5)  cart_blk_len[23:16]  <= ioctl_data;
-					if (cart_hdr_cnt == 6)  cart_blk_len[15:8]   <= ioctl_data;
-					if (cart_hdr_cnt == 7)  cart_blk_len[7:0]    <= ioctl_data;
-					if (cart_hdr_cnt == 8)  cart_blk_len         <= cart_blk_len - 8'h10;
-					if (cart_hdr_cnt == 9)  cart_bank_type       <= ioctl_data;
-					if (cart_hdr_cnt == 10) cart_bank_num[15:8]  <= ioctl_data;
-					if (cart_hdr_cnt == 11) cart_bank_num[7:0]   <= ioctl_data;
-					if (cart_hdr_cnt == 12) cart_bank_laddr[15:8]<= ioctl_data;
-					if (cart_hdr_cnt == 13) cart_bank_laddr[7:0] <= ioctl_data;
-					if (cart_hdr_cnt == 14) cart_bank_size[15:8] <= ioctl_data;
-					if (cart_hdr_cnt == 15) cart_bank_size[7:0]  <= ioctl_data;
+					if (cart_hdr_cnt == 6)  cart_blk_len  <= {ioctl_data, 8'h00};
+					if (cart_hdr_cnt == 11) cart_bank_num <= ioctl_data;
+					if (cart_hdr_cnt == 12) cart_bank_hi  <= ioctl_data > 8'h80;
+					if (cart_hdr_cnt == 14) cart_bank_16k <= ioctl_data > 8'h20;
 					if (cart_hdr_cnt == 15) cart_hdr_wr <= 1;
 				end
 				else begin
@@ -1072,7 +955,7 @@ wire        UMAXromH;
 wire [17:0] audio_l,audio_r;
 wire  [7:0] r,g,b;
 
-wire        ntsc = status[2];
+wire        ntsc_req = status[2];
 
 fpga64_sid_iec fpga64
 (
@@ -1099,6 +982,7 @@ fpga64_sid_iec fpga64
 	.ntscmode(ntsc),
 	.hsync(hsync),
 	.vsync(vsync),
+	.palette(status[84:82]),
 	.r(r),
 	.g(g),
 	.b(b),
@@ -1219,13 +1103,22 @@ wire       drive_iec_data_o;
 wire       drive_reset = ~reset_n | status[6] | (load_c1581 & ioctl_download);
 
 wire [1:0] drive_led;
+wire [6:0] drive_track[2];
+wire [1:0] drive_we;
 wire       disk_ready;
 
 reg [1:0] drive_mounted = 0;
+reg [1:0] old_img_mounted;
+
 always @(posedge clk_sys) begin 
+	old_img_mounted <= img_mounted;
 	if(img_mounted[0]) drive_mounted[0] <= |img_size;
 	if(img_mounted[1]) drive_mounted[1] <= |img_size;
 end
+
+wire mounted_0 = ~old_img_mounted[0] & img_mounted[0];
+wire mounted_1 = ~old_img_mounted[1] & img_mounted[1];
+wire img_readonly_wp = img_readonly | (mounted_0 & status[76]) | (mounted_1 & status[77]);
 
 iec_drive iec_drive
 (
@@ -1245,10 +1138,14 @@ iec_drive iec_drive
 
 	.img_mounted(img_mounted),
 	.img_size(img_size),
-	.img_readonly(img_readonly),
+	.img_readonly(img_readonly_wp),
 	.img_type(&ioctl_index[7:6] ? 2'b11 : 2'b01),
+	.drive_rpm(status[80:78]),
+	.drive_wobble(status[81]),
 
 	.led(drive_led),
+	.out_track(drive_track),
+	.out_we(drive_we),
 	.disk_ready(disk_ready),
 
 	.par_data_i(drive_par_i),
@@ -1271,7 +1168,17 @@ iec_drive iec_drive
 	.rom_addr(load_rom ? (ioctl_addr[15:0] - 16'h4000) : {1'b1,ioctl_addr[14:0]}),
 	.rom_data(ioctl_data),
 	.rom_wr(((load_rom && ioctl_addr[16:14]) || load_c1581) && ioctl_download && ioctl_wr),
-	.rom_std(status[14])
+	.rom_std(status[14]),
+
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(drv_ddram_burstcnt),
+	.DDRAM_ADDR(drv_ddram_addr),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(drv_ddram_rd),
+	.DDRAM_WE(drv_ddram_we),
+	.DDRAM_DIN(drv_ddram_din),
+	.DDRAM_BE(drv_ddram_be)
 );
 
 reg drive_ce;
@@ -1415,6 +1322,172 @@ end
 
 assign HDMI_FREEZE = freeze;
 
+// Snoop DDRAM reads and writes for debug overlay
+reg [63:0] dbg_ddram_data = 0;
+reg [31:0] dbg_ddram_addr = 0;
+reg [31:0] dbg_out_addr   = 0;
+reg        dbg_wait_data  = 0;
+reg        dbg_valid      = 0;
+reg  [7:0] dbg_burst_cnt  = 0;
+
+reg [63:0] dbg_wr_data    = 0;
+reg [31:0] dbg_wr_addr    = 0;
+reg        dbg_wr_valid   = 0;
+
+always @(posedge clk_sys) begin
+    reg old_rd, old_we;
+
+    old_rd <= drv_ddram_rd;
+    old_we <= drv_ddram_we;
+
+    dbg_valid <= 0;
+    if (~old_rd & drv_ddram_rd) begin
+		dbg_ddram_addr <= {3'b0, drv_ddram_addr};
+        dbg_burst_cnt <= drv_ddram_burstcnt;
+        dbg_wait_data <= 1;
+		end
+
+		if (DDRAM_DOUT_READY && dbg_wait_data) begin
+			dbg_ddram_data <= DDRAM_DOUT;
+			dbg_out_addr   <= dbg_ddram_addr;
+			dbg_valid      <= 1;
+
+			if (dbg_burst_cnt <= 8'd1) begin
+				dbg_wait_data  <= 0;
+			end else begin
+				dbg_burst_cnt  <= dbg_burst_cnt - 8'd1;
+				dbg_ddram_addr <= dbg_ddram_addr + 1'd1;
+			end
+		end
+
+    dbg_wr_valid <= 0;
+    if (~old_we & drv_ddram_we) begin
+		dbg_wr_addr <= {3'b0, drv_ddram_addr};
+        dbg_wr_data <= drv_ddram_din;
+        dbg_wr_valid <= 1;
+	end
+end
+
+// Allow cursor keys to change debug base addr for overlay
+// addr stepsize h008 for cursor up & down
+// addr stepsize h100 for cursor left & right
+// timed autorepeat and debounce
+
+reg [31:0] dbg_base_addr = 32'h06000000;
+reg old_ps2_stb;
+reg [23:0] repeat_timer;
+reg repeat_active;
+reg dir_up;
+reg dir_down;
+reg dir_left;
+reg dir_right;
+
+always @(posedge clk_sys) begin
+    old_ps2_stb <= ps2_key[10];
+
+    if (old_ps2_stb != ps2_key[10]) begin
+        if (ps2_key[9]) begin
+            if (ps2_key[8] && ps2_key[7:0] == 8'h75) begin // Up Arrow
+                dbg_base_addr <= dbg_base_addr - 8;
+                dir_up <= 1; dir_down <= 0; dir_left <= 0; dir_right <= 0;
+                repeat_timer <= 24'd15000000; // ~0.3s delay
+                repeat_active <= 1;
+            end else if (ps2_key[8] && ps2_key[7:0] == 8'h72) begin // Down Arrow
+                dbg_base_addr <= dbg_base_addr + 8;
+                dir_up <= 0; dir_down <= 1; dir_left <= 0; dir_right <= 0;
+                repeat_timer <= 24'd15000000;
+                repeat_active <= 1;
+            end else if (ps2_key[8] && ps2_key[7:0] == 8'h6B) begin // Left Arrow
+                dbg_base_addr <= dbg_base_addr - 32'h100;
+                dir_up <= 0; dir_down <= 0; dir_left <= 1; dir_right <= 0;
+                repeat_timer <= 24'd15000000;
+                repeat_active <= 1;
+            end else if (ps2_key[8] && ps2_key[7:0] == 8'h74) begin // Right Arrow
+                dbg_base_addr <= dbg_base_addr + 32'h100;
+                dir_up <= 0; dir_down <= 0; dir_left <= 0; dir_right <= 1;
+                repeat_timer <= 24'd15000000;
+                repeat_active <= 1;
+            end else begin
+                repeat_active <= 0;
+            end
+        end else begin
+            if ((ps2_key[8] && ps2_key[7:0] == 8'h75 && dir_up) ||
+                (ps2_key[8] && ps2_key[7:0] == 8'h72 && dir_down) ||
+                (ps2_key[8] && ps2_key[7:0] == 8'h6B && dir_left) ||
+                (ps2_key[8] && ps2_key[7:0] == 8'h74 && dir_right)) begin
+                repeat_active <= 0;
+                dir_up <= 0;
+                dir_down <= 0;
+                dir_left <= 0;
+                dir_right <= 0;
+            end
+        end
+    end else if (repeat_active) begin
+        if (repeat_timer == 0) begin
+            if (dir_up) dbg_base_addr <= dbg_base_addr - 8;
+            if (dir_down) dbg_base_addr <= dbg_base_addr + 8;
+            if (dir_left) dbg_base_addr <= dbg_base_addr - 32'h100;
+            if (dir_right) dbg_base_addr <= dbg_base_addr + 32'h100;
+            repeat_timer <= 24'd2000000; // ~0.04s repeat
+        end else begin
+            repeat_timer <= repeat_timer - 1'd1;
+        end
+    end
+end
+
+// Drive Overlay display:
+//  - three modes: on activity (default), if enabled, debug and off
+//  - color coded: green for idle (only shows in "if enabled" and "debug" mode)
+//                 yellow for (read) activity (via drive led)
+//                 red for write activity (covers writes to disk & flushing to sd)
+//  - track number: Full tracks and half tracks (e.g. 33.5)
+//  - drive number: (#8, #9)
+//  - auto adjusts for pal/ntsc
+//
+// debug mode captures DDRAM reads/writes:
+//  - reads displayed on the left (green), writes on the right (yellow)
+//  - rolling buffer (top 8 lines) shows the last 8 reads/writes and addresses
+//  - base address captures (botoom 8 lines) shows 8 read/writes starting at base address
+//  - base address can be changed in real time with cursor keys (left, right, up, down)
+//  - captures live read/writes not memory content, so set address before you expect read/writes (!)
+//
+//
+wire [1:0] ovl_color;
+
+reg [1:0] ce_sys_div = 0;
+wire ce_sys = (ce_sys_div == 0);
+always @(posedge clk_sys) ce_sys_div <= ce_sys_div + 1'd1;
+
+drv_overlay drv_ovl (
+	.clk(clk_sys),
+	.ce(ce_sys),
+	.hblank(hblank),
+	.vblank(vblank),
+
+	.drive_osd_mode(status[86:85]),
+	.ntsc(ntsc),
+	.drive_led(drive_led),
+	.drive_mounted(drive_mounted),
+	.drive_track_0(drive_track[0]),
+	.drive_track_1(drive_track[1]),
+	.drive_we(drive_we),
+
+	.valid(dbg_valid),
+	.addr(dbg_out_addr),
+	.data(dbg_ddram_data),
+	.wr_valid(dbg_wr_valid),
+	.wr_addr(dbg_wr_addr),
+	.wr_data(dbg_wr_data),
+	.base_addr(dbg_base_addr),
+
+	.pixel_color(ovl_color)
+);
+
+reg [1:0] ovl_color_sync;
+always @(posedge CLK_VIDEO) begin
+    ovl_color_sync <= ovl_color;
+end
+
 video_mixer #(.GAMMA(1)) video_mixer
 (
 	.CLK_VIDEO(CLK_VIDEO),
@@ -1424,9 +1497,10 @@ video_mixer #(.GAMMA(1)) video_mixer
 	.gamma_bus(gamma_bus),
 
 	.ce_pix(ce_pix),
-	.R(r),
-	.G(g),
-	.B(b),
+	 // overlay colors: 0=Transparent, 1=Green, 2=Yellow, 3=Red
+	.R((ovl_color_sync == 2 || ovl_color_sync == 3) ? 8'hFF : (ovl_color_sync == 1 ? 8'h00 : r)),
+	.G((ovl_color_sync == 1 || ovl_color_sync == 2) ? 8'hFF : (ovl_color_sync == 3 ? 8'h00 : g)),
+	.B((ovl_color_sync != 0) ? 8'h00 : b),
 	.HSync(hsync_out),
 	.VSync(vsync_out),
 	.HBlank(hblank),
