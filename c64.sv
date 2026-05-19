@@ -28,12 +28,13 @@ module emu
 	`include "sys/emu_ports.vh"
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 port-list extension
 	// Upstream "Update sys." moved the emu port list into sys/emu_ports.vh
-	// (upstream-owned, no DB9 signals). Re-add the three fork-only outputs
-	// after the include so c64.sv still compiles under 'default_nettype none.
+	// (upstream-owned, no DB9 signals). Re-add the fork-only outputs after
+	// the include so c64.sv still compiles under 'default_nettype none.
+	// joy_raw stays internal (joy_raw_payload -> hps_io), like every other
+	// core - it is NOT an emu port.
 	,
 	output [7:0]  USER_PP,
-	output        USER_OSD,
-	output [15:0] joy_raw
+	output        USER_OSD
 	// [MiSTer-DB9 END]
 );
 
