@@ -48,8 +48,9 @@ jobs:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    # `skip_quartus=true` for a non-Quartus section (COMPILATION_INPUT=make,
-    # e.g. Main_DB9) so build/publish stay inert no-ops there.
+    # Defence-in-depth safety net: setup_cicd.sh routes COMPILATION_INPUT=make
+    # sections to unstable_release_make.yml; this template should never land
+    # on a make fork. If it does, skip cleanly.
     - name: Emit per-core matrix
       if: steps.preflight.outputs.skip != 'true'
       id: meta
@@ -57,13 +58,22 @@ jobs:
         first_input=$(echo 'C64.qpf' | awk '{print $1}')
         if [ "${first_input}" = "make" ]; then
           echo "skip_quartus=true" >> "$GITHUB_OUTPUT"
-          echo "Non-Quartus section (make) — skipping native Quartus build."
+          echo "::warning::Quartus template landed on a make fork — unstable_release_make.yml should be running instead."
           exit 0
         fi
         echo "skip_quartus=false" >> "$GITHUB_OUTPUT"
         matrix=$(./.github/emit_matrix.sh 'C64' 'C64.qpf' 'output_files/C64.rbf')
         echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
         echo "Matrix: ${matrix}"
+
+    # coresv_lint (in merge_validate.sh, run from unstable_merge.sh below)
+    # prefers verilator as a true SV syntax oracle on the post-merge
+    # <core>.sv. Gated by the SAME condition as the merge step so the cron
+    # ticks that skip (no upstream change — the common case) don't pay the
+    # apt install. ~seconds when it does run; merge_validate is CI-only.
+    - name: Install verilator (coresv_lint gate)
+      if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
+      run: sudo apt-get update && sudo apt-get install -y verilator
 
     - name: Merge upstream HEAD (once, pre fan-out)
       if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
