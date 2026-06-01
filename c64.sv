@@ -70,7 +70,10 @@ assign HDMI_BOB_DEINT = 0;
 //JOY DB9
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
-wire   [1:0] joy_type        = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
+wire   [1:0] joy_type_raw    = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
+// snac_active (declared below = |snac_mode) gates joy_type to 0 so the joydb
+// wrapper defers to upstream's native SNAC on the shared USER_IO pins.
+wire   [1:0] joy_type        = snac_active ? 2'd0 : joy_type_raw;
 wire         joy_2p          = status[125];
 wire         joy_db9md_en    = (joy_type == 2'd2);
 wire         joy_db15_en     = (joy_type == 2'd3);
@@ -91,7 +94,9 @@ wire  [15:0] joy_raw_payload;
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: probe-gating wires
 // SNAC cores: replace 1'b0 with the core's SNAC enable expression so SNAC
 // preempts the joydb wrapper on shared USER_IO pins. Default 1'b0 is no-op.
-wire         snac_active     = 1'b0;
+// Upstream's native SNAC (status[88:87] "SNAC Joystick") is a separate raw-cable
+// path on the same USER_IO pins; gate joy_type->0 here so joydb defers to it.
+wire         snac_active     = |snac_mode; // snac_mode = status[88:87], declared below
 // MT32-pi probe-suppression gate. Auto-detected from MT32 signals declared
 // elsewhere in this file (mt32_disable / mt32_use / mt32_on_primary). Hand-edit
 // if the heuristic missed your core's gate expression. Suppresses the OSD-open
@@ -229,6 +234,7 @@ localparam CONF_STR = {
 	"O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",
 	"O[125],UserIO Players,1 Player,2 Players;",
 	// [MiSTer-DB9-Pro END]
+	"O[88:87],SNAC Joystick,Disabled,Joy 1,Joy 2;",
 	"-;",
 	"O[47:46],Turbo mode,Off,C128,Smart;",
 	"d6O[49:48],Turbo speed,2x,3x,4x;",
@@ -628,8 +634,21 @@ wire [6:0] joyC_c64 = joy[8] ? 7'd0 : {joyC[6:4], joyC[0], joyC[1], joyC[2], joy
 wire [6:0] joyD_c64 = joy[8] ? 7'd0 : {joyD[6:4], joyD[0], joyD[1], joyD[2], joyD[3]};
 
 // swap joysticks if requested
-wire [6:0] joyA_c64 = status[3] ? joyB_int : joyA_int;
-wire [6:0] joyB_c64 = status[3] ? joyA_int : joyB_int;
+// SNAC DB9 joystick support - C64/Amiga/SMS standard pinout:
+//   Pin 1 Up     -> USER_IN[1]  (active low)
+//   Pin 2 Down   -> USER_IN[0]  (active low)
+//   Pin 3 Left   -> USER_IN[5]  (active low)
+//   Pin 4 Right  -> USER_IN[3]  (active low)
+//   Pin 5 NC     -> not used
+//   Pin 6 Fire A -> USER_IN[2]  (active low, Button 1)
+//   Pin 9 Fire B -> USER_IN[6]  (active low, Button 2)
+wire [1:0] snac_mode = status[88:87]; // 0=disabled, 1=Joy1, 2=Joy2
+wire [6:0] snac_joy  = {1'b0, ~USER_IN[6], ~USER_IN[2],
+                        ~USER_IN[3], ~USER_IN[5], ~USER_IN[0], ~USER_IN[1]};
+// format: {fire3=0, fireB(Pin9), fireA(Pin6), right(Pin4), left(Pin3), down(Pin2), up(Pin1)}
+
+wire [6:0] joyA_c64 = (snac_mode == 2'd1) ? snac_joy : (status[3] ? joyB_int : joyA_int);
+wire [6:0] joyB_c64 = (snac_mode == 2'd2) ? snac_joy : (status[3] ? joyA_int : joyB_int);
 
 wire [7:0] paddle_1 = status[3] ? pd3 : pd1;
 wire [7:0] paddle_2 = status[3] ? pd4 : pd2;
@@ -1243,14 +1262,22 @@ always @(posedge clk_sys) begin
 end
 
 wire ext_iec_en   = status[25];
-wire ext_iec_clk  = USER_IN[2] | ~ext_iec_en;
-wire ext_iec_data = USER_IN[4] | ~ext_iec_en;
+wire ext_iec_clk  = |snac_mode ? 1'b1 : (USER_IN[2] | ~ext_iec_en);
+wire ext_iec_data = |snac_mode ? 1'b1 : (USER_IN[4] | ~ext_iec_en);
 
-//assign USER_OUT[2] = (c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en;
-//assign USER_OUT[3] = (reset_n & ~status[6]) | ~ext_iec_en;
-//assign USER_OUT[4] = (c64_iec_data & drive_iec_data_o) | ~ext_iec_en;
-//assign USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_OUT driving relocated into the
+// always_comb mux below so the fork joydb arm (else if joy_any_en) can share the
+// pins. Upstream's standalone native-IEC assigns (now snac_mode-gated) are kept
+// here commented for merge reference; the live gated form lives in the
+// `else if(ext_iec_en)` branch of that mux. Native SNAC and the fork joydb path
+// are mutually exclusive: SNAC drives USER_OUT[2..6] high (|snac_mode), and the
+// fork's snac_active=|snac_mode forces joy_type->0 so joy_any_en cannot win.
+//assign USER_OUT[2] = |snac_mode ? 1'b1 : ((c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en);
+//assign USER_OUT[3] = |snac_mode ? 1'b1 : ((reset_n & ~status[6]) | ~ext_iec_en);
+//assign USER_OUT[4] = |snac_mode ? 1'b1 : ((c64_iec_data & drive_iec_data_o) | ~ext_iec_en);
+//assign USER_OUT[5] = |snac_mode ? 1'b1 : (c64_iec_atn | ~ext_iec_en);
 //assign USER_OUT[6] = '1;
+// [MiSTer-DB9 END]
 
 wire hsync;
 wire vsync;
@@ -1796,10 +1823,10 @@ always_comb begin
 			USER_OUT[1] = (pa2_o & sp1_o) | uart_int;
 		end
 	end else if(ext_iec_en) begin
-		USER_OUT[2] = (c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en;
-		USER_OUT[3] = (reset_n & ~status[6]) | ~ext_iec_en;
-		USER_OUT[4] = (c64_iec_data & drive_iec_data_o) | ~ext_iec_en;
-		USER_OUT[5] = c64_iec_atn | ~ext_iec_en;
+		USER_OUT[2] = |snac_mode ? 1'b1 : ((c64_iec_clk & drive_iec_clk_o)  | ~ext_iec_en);
+		USER_OUT[3] = |snac_mode ? 1'b1 : ((reset_n & ~status[6]) | ~ext_iec_en);
+		USER_OUT[4] = |snac_mode ? 1'b1 : ((c64_iec_data & drive_iec_data_o) | ~ext_iec_en);
+		USER_OUT[5] = |snac_mode ? 1'b1 : (c64_iec_atn | ~ext_iec_en);
 		USER_OUT[6] = '1;
 		pb_i[5:0] = {!joyD_c64[6:4], !joyC_c64[6:4], pb_o[7] ? ~joyC_c64[3:0] : ~joyD_c64[3:0]};
 	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 (and Saturn via wrapper) joystick drive arm
