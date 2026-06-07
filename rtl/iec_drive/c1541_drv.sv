@@ -13,7 +13,7 @@
 //                             : remove iec internal OR wired
 //                             : synched atn_in (sometime no IRQ with real c64)
 //
-// Input clk 16MHz
+// Input clk ~32MHz (clk_sys from top level, previously labeled 16MHz)
 //
 //-------------------------------------------------------------------------------
 
@@ -32,10 +32,15 @@ module c1541_drv
 	input         img_mounted,
 	input         img_readonly,
 	input  [31:0] img_size,
+	input   [2:0] drive_rpm,
+	input         drive_wobble,
+
 	output reg    disk_ready,
 
 	input   [1:0] drive_num,
 	output        led,
+	output wire [6:0] out_track,
+	output wire    out_we,
 
 	input         iec_atn_i,
 	input         iec_data_i,
@@ -64,28 +69,115 @@ module c1541_drv
 	input  [13:0] sd_buff_addr,
 	input   [7:0] sd_buff_dout,
 	output  [7:0] sd_buff_din,
-	input         sd_buff_wr
+	input         sd_buff_wr,
+
+	input         DDRAM_BUSY,
+	output  [7:0] DDRAM_BURSTCNT,
+	output [28:0] DDRAM_ADDR,
+	input  [63:0] DDRAM_DOUT,
+	input         DDRAM_DOUT_READY,
+	output        DDRAM_RD,
+	output        DDRAM_WE,
+	output [63:0] DDRAM_DIN,
+	output  [7:0] DDRAM_BE
 );
 
-assign led = act | sd_busy;
+assign led       = act;
+assign out_track = track;
+assign out_we    = track_modified | busy_flushing_s;
 
-reg        readonly = 0;
+typedef enum bit [1:0] {
+	IDLE           = 2'd0,
+	// Disk Swap states
+	MOUNT_REMOVED  = 2'd1,
+	MOUNT_EMPTY    = 2'd2
+} mount_fsm_t;
+
+mount_fsm_t state = IDLE;
+
+reg        readonly     = 0;
 reg        disk_present = 0;
-reg [24:0] ch_timeout;
+reg        present      = 0;
+reg        old_mounted  = 0;
+reg [21:0] phase_timer  = 0;
+reg        wps_reg      = 0;
+
 always @(posedge clk) begin
-	reg old_mounted;
-	reg present = 0;
-
-	if(ce && ch_timeout > 0) ch_timeout <= ch_timeout - 1'd1;
-	if(!ch_timeout) disk_present <= present;
-	disk_ready <= !ch_timeout;
-
 	old_mounted <= img_mounted;
+	disk_ready  <= (state == IDLE) && (phase_timer == 0);
+
 	if (~old_mounted & img_mounted) begin
-		ch_timeout <= '1;
 		readonly <= img_readonly;
-		present <= |img_size;
-		disk_present <= 0;
+		if (|img_size) begin
+			if (present) begin
+				// Mount -> Mount sequence starts by removing Disk
+				state        <= MOUNT_REMOVED;
+				disk_present <= 0;
+				wps_reg      <= 1;
+				// ~262ms removal  phase
+				phase_timer  <= 22'h3FFFFF;
+			end else begin
+				// Empty -> Mount sequence starts by adding empty
+				// phase before inserting, as a cautionary measure,
+				// if drive was just enabled.
+				state        <= MOUNT_EMPTY;
+				disk_present <= 0;
+				wps_reg      <= 0; // Drive empty.
+				phase_timer  <= 22'h3FFFFF;
+			end
+			present          <= 1;
+		end else begin
+			if (present) begin
+				// Mount -> Empty sequence just removes Disk
+				state        <= IDLE;
+				disk_present <= 0;
+				wps_reg      <= 1;
+				phase_timer  <= 22'h3FFFFF;
+			end else begin     // Already empty
+				// Do Nothing
+				state        <= IDLE;
+				disk_present <= 0;
+				wps_reg      <= 0;
+				phase_timer  <= 0;
+			end
+			present <= 0;
+		end
+	end else if (ce) begin
+		if (phase_timer > 0) begin
+			phase_timer <= phase_timer - 1'd1;
+		end else begin
+			// Phase transition dispatcher
+			case (state)
+				IDLE:          begin
+					// IDLE
+					// Is the final terminal state for all sequences.
+					// Applies the true, final write protect and
+					// disk_present status.
+					state        <= IDLE;
+					disk_present <= present;
+					wps_reg      <= present ? readonly : 1'b0;
+				end
+				MOUNT_REMOVED: begin
+					// Leave empty for a while
+					state        <= MOUNT_EMPTY;
+					phase_timer  <= 22'h3FFFFF;
+					disk_present <= 0;
+					wps_reg      <= 0;
+				end
+				MOUNT_EMPTY:  begin
+					// Insert Disk
+					state        <= IDLE;
+					phase_timer  <= 22'h3FFFFF;
+					disk_present <= 0;
+					wps_reg      <= 1;
+				end
+				default:      begin
+					state        <= IDLE;
+					disk_present <= present;
+					wps_reg      <= present ? readonly : 1'b0;
+				end
+			endcase
+		end
 	end
 end
 
@@ -94,6 +186,8 @@ wire [1:0] stp;
 wire       mtr;
 wire       act;
 wire [1:0] freq;
+
+wire wps_n = ~wps_reg;
 
 c1541_logic c1541_logic
 (
@@ -123,56 +217,32 @@ c1541_logic c1541_logic
 
 	// drive-side interface
 	.ds(drive_num),
-	.din(gcr_mode ? dgcr_do : gcr_do),
-	.dout(gcr_di),
+	.din(dgcr_do),
+	.dout(dgcr_di),
 	.mode(mode),
 	.stp(stp),
 	.mtr(mtr),
 	.freq(freq),
-	.sync_n(gcr_mode ? dgcr_sync_n : gcr_sync_n),
-	.byte_n(gcr_mode ? dgcr_byte_n : gcr_byte_n),
-	.wps_n(~readonly ^ ch_timeout[23]),
+	.sync_n(dgcr_sync_n),
+	.byte_n(dgcr_byte_n),
+	.wps_n(wps_n),
 	.tr00_sense_n(|track),
 	.act(act)
 );
 
-wire  [7:0] gcr_di;
-wire        we = gcr_mode ? dgcr_we : gcr_we;
-assign      sd_buff_din = gcr_mode ? dgcr_sd_buff_dout : gcr_sd_buff_dout;
+iecdrv_sync dirty_sync(clk, busy_flushing, busy_flushing_s);
+wire        we = dgcr_we;
+wire [7:0]  dgcr_do,dgcr_di;
+wire [63:0] dgcr_sd_buff_dout;
+wire        dgcr_sync_n, dgcr_byte_n, dgcr_we;
+wire [13:0] dma_buff_addr;
+wire [63:0] dma_buff_dout;
+wire        dma_buff_wr;
+wire        dma_active;
 
-wire sd_busy;
-iecdrv_sync busy_sync(clk, busy, sd_busy);
-
-wire [7:0]  gcr_do, gcr_sd_buff_dout;
-wire        gcr_sync_n, gcr_byte_n, gcr_we;
-
-c1541_gcr c1541_gcr
-(
-	.clk(clk),
-	.ce(ce & ~gcr_mode),
-	
-	.dout(gcr_do),
-	.din(gcr_di),
-	.mode(mode),
-	.mtr(mtr),
-	.freq(freq),
-	.sync_n(gcr_sync_n),
-	.byte_n(gcr_byte_n),
-
-	.track(track[6:1]+1'd1),
-	.busy(sd_busy | ~disk_present),
-	.we(gcr_we),
-
-	.sd_clk(clk_sys),
-	.sd_lba(sd_lba),
-	.sd_buff_addr(sd_buff_addr[12:0]),
-	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din(gcr_sd_buff_dout),
-	.sd_buff_wr(sd_ack & sd_buff_wr & ~gcr_mode)
-);
-
-wire [7:0] dgcr_do, dgcr_sd_buff_dout;
-wire       dgcr_sync_n, dgcr_byte_n, dgcr_we;
+// Interface bg_buff (64bit) to sd_buff (8bit)
+wire [63:0] bg_buff_dout;
+assign      sd_buff_din = bg_buff_dout[(sd_buff_addr[2:0]*8) +: 8];
 
 c1541_direct_gcr c1541_direct_gcr
 (
@@ -180,25 +250,30 @@ c1541_direct_gcr c1541_direct_gcr
 	.ce(ce & gcr_mode),
 	.reset(reset),
 	
+	.drive_rpm(drive_rpm),
+	.drive_wobble(drive_wobble),
+	
 	.dout(dgcr_do),
-	.din(gcr_di),
+	.din(dgcr_di),
 	.mode(mode),
 	.mtr(mtr),
 	.freq(freq),
+	.wps_n(wps_n),
 	.sync_n(dgcr_sync_n),
 	.byte_n(dgcr_byte_n),
 
-	.busy(sd_busy | ~disk_present),
+	.disk_present(disk_present),
 	.we(dgcr_we),
 
 	.sd_clk(clk_sys),
-	.sd_buff_addr(sd_buff_addr),
-	.sd_buff_dout(sd_buff_dout),
+	.sd_buff_addr(dma_buff_addr),
+	.sd_buff_dout(dma_buff_dout),
 	.sd_buff_din(dgcr_sd_buff_dout),
-	.sd_buff_wr(sd_ack & sd_buff_wr & gcr_mode)
+	.sd_buff_wr(dma_buff_wr)
 );
 
-wire busy;
+wire busy_flushing;
+wire busy_flushing_s;
 
 c1541_track c1541_track
 (
@@ -216,13 +291,33 @@ c1541_track c1541_track
 	.save_track(save_track),
 	.change(img_mounted),
 	.track(track),
-	.busy(busy)
+	.busy_flushing(busy_flushing),
+	.drive_num(drive_num[0]),
+
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_WE(DDRAM_WE),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+
+	.dma_buff_addr(dma_buff_addr),
+	.dma_buff_dout(dma_buff_dout),
+	.dma_buff_wr(dma_buff_wr),
+	.dma_buff_din(dgcr_sd_buff_dout),
+
+	.sd_buff_addr(sd_buff_addr),
+	.bg_buff_dout(bg_buff_dout)
 );
 
 reg [6:0] track;
 reg       save_track = 0;
+reg [23:0] read_timer = 0;
+reg        track_modified = 0;
 always @(posedge clk) begin
-	reg       track_modified;
 	reg [6:0] track_num;
 	reg [1:0] move, stp_old;
 
@@ -231,25 +326,46 @@ always @(posedge clk) begin
 	stp_old <= stp;
 	move <= stp - stp_old;
 
-	if (we)          track_modified <= 1;
-	if (img_mounted) track_modified <= 0;
+	if (we && disk_present) track_modified <= 1;
+	if (img_mounted)        track_modified <= 0;
 
 	if (reset) begin
-		track_num <= 36;
+		track_num <= 34;
 		track_modified <= 0;
 	end else begin
 		if (mtr & move[0]) begin
 			if (~move[1] && track_num < 84) track_num <= track_num + 1'b1;
 			if ( move[1] && track_num > 0 ) track_num <= track_num - 1'b1;
+			// must save modified track on track change
 			if (track_modified) save_track <= ~save_track;
 			track_modified <= 0;
 		end
 
-		if (track_modified & ~act) begin	// stopping activity
+		// Save Track Strategy:
+		// balance SD longevity against data integrity by aggregating writes.
+		//
+		// Trade-offs:
+		// - DOS motor-off is too sluggish (~2s) for modern users.
+		// - DOS write-patterns (sector-by-sector) cause 20+ cycles per track.
+		// - Poorly behaved software (e.g., track copiers) abuses the LED and motor states.
+		//
+		// Strategy:
+		// We use a Write->Read transition timeout. If the drive has been in read mode for
+		// ~500ms since the last write, we assume inactivity and save the track.
+		// We also save immediately if the motor turns off.
+		if (track_modified && ((mode && read_timer == 24'd16_000_000) || !mtr)) begin
 			save_track <= ~save_track;
 			track_modified <= 0;
 		end
 	end
+
+	// Timer for read inactivity (500ms at ~32MHz = 16,000,000 cycles)
+	if (!mode) begin // mode 0 = writing
+		read_timer <= 0;
+	end else if (read_timer != 24'd16_000_000) begin
+		read_timer <= read_timer + 1'd1;
+	end
+
 end
 
 endmodule
