@@ -145,8 +145,8 @@ joydb joydb (
 // User now selects the joystick type explicitly through the OSD (Off, Saturn,
 // DB9MD, DB15) at status[127:126]; the wrapper internally muxes raw outputs
 // and AND-gates the Saturn arm with saturn_unlocked.
-wire [15:0] joyA = joydb_1ena ? (OSD_STATUS? 16'b0 : {joydb_1[6:0]}) : joyA_USB;
-wire [15:0] joyB = joydb_2ena ? (OSD_STATUS? 16'b0 : {joydb_2[6:0]}) : joydb_1ena ? joyA_USB : joyB_USB;
+wire [15:0] joyA = joydb_1ena ? (OSD_STATUS? 16'b0 : joydb_1_mapped[6:0]) : joyA_USB;
+wire [15:0] joyB = joydb_2ena ? (OSD_STATUS? 16'b0 : joydb_2_mapped[6:0]) : joydb_1ena ? joyA_USB : joyB_USB;
 wire [15:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
 wire [15:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
 // [MiSTer-DB9 END]
