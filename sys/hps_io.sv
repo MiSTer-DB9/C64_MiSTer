@@ -37,25 +37,14 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, 
 	input             clk_sys,
 	inout      [45:0] HPS_BUS,
 
-	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw input
-	input      [15:0] joy_raw,
-	// [MiSTer-DB9 END]
-	// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
-	output            db9_remap_cmd,
-	output      [5:0] db9_remap_byte_cnt,
-	output     [15:0] db9_remap_din,
-	// [MiSTer-DB9 END]
 	// buttons up to 32
-	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (per-customer SipHash MAC; UIO_DB9_KEY 0xFE)
-	output            saturn_unlocked,
-	// [MiSTer-DB9-Pro END]
 	output reg [31:0] joystick_0,
 	output reg [31:0] joystick_1,
 	output reg [31:0] joystick_2,
 	output reg [31:0] joystick_3,
 	output reg [31:0] joystick_4,
 	output reg [31:0] joystick_5,
-	
+
 	// analog -127..+127, Y: [15:8], X: [7:0]
 	output reg [15:0] joystick_l_analog_0,
 	output reg [15:0] joystick_l_analog_1,
@@ -111,6 +100,17 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, 
 	// ps2 alternative interface.
 
 	// [8] - extended, [9] - pressed, [10] - toggles with every press/release
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+	input      [15:0] joy_raw,
+	// [MiSTer-DB9 END]
+	// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
+	output            db9_remap_cmd,
+	output      [5:0] db9_remap_byte_cnt,
+	output     [15:0] db9_remap_din,
+	// [MiSTer-DB9 END]
+	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (per-customer SipHash MAC; UIO_DB9_KEY 0xFE)
+	output            saturn_unlocked,
+	// [MiSTer-DB9-Pro END]
 	output reg [10:0] ps2_key = 0,
 
 	// [24] - toggles with every event
@@ -129,8 +129,8 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, 
 
 	output reg [127:0] status,
 	input      [127:0] status_in,
-	input             status_set,
-	input      [15:0] status_menumask,
+	input              status_set,
+	input       [15:0] status_menumask,
 
 	input             info_req,
 	input       [7:0] info,
@@ -296,7 +296,7 @@ always@(posedge clk_sys) begin : uio_block
 		stflg <= stflg + 1'd1;
 		status_req <= status_in;
 	end
-	
+
 	old_upload_req <= ioctl_upload_req;
 	if(~old_upload_req & ioctl_upload_req) upload_req <= 1;
 
@@ -343,7 +343,7 @@ always@(posedge clk_sys) begin : uio_block
 				  'h29: io_dout <= {4'hA, stflg};
 				  'h32: io_dout <= gamma_bus[21];
 				  'h36: begin io_dout <= info_n; info_n <= 0; end
-				  'h3C: if(upload_req) begin io_dout <= {ioctl_upload_index, 8'd1}; upload_req <= 0; end
+				  'h3C: if(upload_req) begin io_dout <= {ioctl_upload_index, 8'd1}; upload_req <= 0; end				  
 				  'h43: io_dout <= |F12KEYMOD;
 				'h003F: io_dout <= joystick_0_rumble;
 				'h013F: io_dout <= joystick_1_rumble;
@@ -358,11 +358,11 @@ always@(posedge clk_sys) begin : uio_block
 		end else begin
 
 			casex(cmd)
+				// buttons and switches
+				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 				// Reading user_io raw joy
-				// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw command handler
 				'h0f: io_dout <= joy_raw;
 				// [MiSTer-DB9 END]
-				// buttons and switches
 				'h01: cfg <= io_din;
 				'h02: if(byte_cnt==1) joystick_0[15:0] <= io_din; else joystick_0[31:16] <= io_din;
 				'h03: if(byte_cnt==1) joystick_1[15:0] <= io_din; else joystick_1[31:16] <= io_din;
@@ -483,10 +483,10 @@ always@(posedge clk_sys) begin : uio_block
 				// status, 128bit version
 				'h1e: if(!byte_cnt[MAX_W:4]) begin
 							case(byte_cnt[3:0])
-								1: status[15:00] <= io_din;
-								2: status[31:16] <= io_din;
-								3: status[47:32] <= io_din;
-								4: status[63:48] <= io_din;
+								1: status[15:00]   <= io_din;
+								2: status[31:16]   <= io_din;
+								3: status[47:32]   <= io_din;
+								4: status[63:48]   <= io_din;
 								5: status[79:64]   <= io_din;
 								6: status[95:80]   <= io_din;
 								7: status[111:96]  <= io_din;
@@ -535,7 +535,7 @@ always@(posedge clk_sys) begin : uio_block
 
 				//menu mask
 				'h2E: if(byte_cnt == 1) io_dout <= status_menumask;
-				
+
 				//sdram size set
 				'h31: if(byte_cnt == 1) sdram_sz <= io_din;
 
@@ -643,7 +643,7 @@ always@(posedge clk_sys) begin : fio_block
 	reg        wr;
 	reg  [1:0] req_io;
 	reg        skip_add;
-	
+
 	ioctl_rd <= 0;
 	ioctl_wr <= wr;
 	wr <= 0;
@@ -683,7 +683,7 @@ always@(posedge clk_sys) begin : fio_block
 					FIO_FILE_TX:
 						begin
 							cnt <= cnt + 1'd1;
-							case(cnt) 
+							case(cnt)
 								0:	if(io_din[7:0]) begin
 										ioctl_addr <= 0;
 										req_io <= (io_din[7:0] == 8'hAA) ? 2'b10 : 2'b01;
@@ -703,14 +703,14 @@ always@(posedge clk_sys) begin : fio_block
 							if(!skip_add) ioctl_addr <= ioctl_addr + (WIDE ? 2'd2 : 2'd1);
 							skip_add <= 0;
 							
-						if(ioctl_download) begin
-							ioctl_dout <= io_din[DW:0];
-							wr   <= 1;
-						end
-						else begin
-							fp_dout <= ioctl_din;
-							ioctl_rd <= 1;
-						end
+							if(ioctl_download) begin
+								ioctl_dout <= io_din[DW:0];
+								wr <= 1;
+							end
+							else begin
+								fp_dout <= ioctl_din;
+								ioctl_rd <= 1;
+							end
 						end
 				endcase
 			end
@@ -718,6 +718,12 @@ always@(posedge clk_sys) begin : fio_block
 	end
 end
 
+
+// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream drivers
+assign db9_remap_cmd      = (uio_block.cmd == 16'hFD);
+assign db9_remap_byte_cnt = byte_cnt[5:0];
+assign db9_remap_din      = io_din;
+// [MiSTer-DB9 END]
 
 // [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (40-byte UIO_DB9_KEY 0xFE bytestream)
 `include "db9_key_secret.vh"
@@ -735,12 +741,6 @@ db9_key_gate #(
 );
 // [MiSTer-DB9-Pro END]
 
-
-// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream drivers
-assign db9_remap_cmd      = (uio_block.cmd == 16'hFD);
-assign db9_remap_byte_cnt = byte_cnt[5:0];
-assign db9_remap_din      = io_din;
-// [MiSTer-DB9 END]
 endmodule
 
 //////////////////////////////////////////////////////////////////////////////////
