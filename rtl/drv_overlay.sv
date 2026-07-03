@@ -41,8 +41,8 @@ module drv_overlay (
 
 	// pixel output for video mixer
 	// 0=Transparent, 1=Green, 2=Yellow, 3=Red
-	output [1:0] pixel_color
-	);
+	output reg [2:0] pixel_color
+);
 
 // Debug info
 // `hist_addr` and `hist_data` are rolling buffers for the last 8 DDRAM reads (addresses and value)
@@ -296,18 +296,19 @@ wire valid_osd_pixel = drv_area && (drv_px < 5) && (drv_py < 5) &&
 // ---------------------------------------------------------------------------
 // PIPELINE STAGE 1: Latch coordinates, character inputs, and state flags
 // ---------------------------------------------------------------------------
-reg [4:0] char_to_draw_s1;
+reg [6:0] char_to_draw_s1;
 reg [2:0] px_s1;
-reg [2:0] py_s1;
 
 reg valid_osd_s1, valid_rd_s1, valid_wr_s1;
 reg drv_led_act_s1, drv_we_act_s1;
 
+wire [6:0] char_to_draw_s0 = valid_osd_pixel ? drv_char : dbg_nibble;
+wire [6:0] py_s0           = valid_osd_pixel ? drv_py   : dbg_py;
+
 always @(posedge clk) begin
 	if (ce) begin
-		char_to_draw_s1 <= valid_osd_pixel ? drv_char : {1'b0, dbg_nibble};
-		px_s1           <= valid_osd_pixel ? drv_px   : dbg_px;
-		py_s1           <= valid_osd_pixel ? drv_py   : dbg_py;
+		char_to_draw_s1 <= (char_to_draw_s0 << 2) + char_to_draw_s0 + py_s0;
+		px_s1           <= valid_osd_pixel ? drv_px : dbg_px;
 
 		valid_osd_s1    <= valid_osd_pixel;
 		valid_rd_s1     <= valid_pixel_rd;
@@ -327,31 +328,32 @@ reg [2:0] px_s2;
 reg valid_osd_s2, valid_rd_s2, valid_wr_s2;
 reg drv_led_act_s2, drv_we_act_s2;
 
+wire [4:0] font[19*5] = '{
+	5'b01110, 5'b10001, 5'b10001, 5'b10001, 5'b01110,
+	5'b00100, 5'b01100, 5'b00100, 5'b00100, 5'b01110,
+	5'b01110, 5'b10001, 5'b00110, 5'b01000, 5'b11111,
+	5'b11110, 5'b00001, 5'b01110, 5'b00001, 5'b11110,
+	5'b10001, 5'b10001, 5'b11111, 5'b00001, 5'b00001,
+	5'b11111, 5'b10000, 5'b11110, 5'b00001, 5'b11110,
+	5'b01110, 5'b10000, 5'b11110, 5'b10001, 5'b01110,
+	5'b11111, 5'b00001, 5'b00010, 5'b00100, 5'b00100,
+	5'b01110, 5'b10001, 5'b01110, 5'b10001, 5'b01110,
+	5'b01110, 5'b10001, 5'b01111, 5'b00001, 5'b01110,
+	5'b01110, 5'b10001, 5'b11111, 5'b10001, 5'b10001,
+	5'b11110, 5'b10001, 5'b11110, 5'b10001, 5'b11110,
+	5'b01110, 5'b10000, 5'b10000, 5'b10000, 5'b01110,
+	5'b11110, 5'b10001, 5'b10001, 5'b10001, 5'b11110,
+	5'b11111, 5'b10000, 5'b11110, 5'b10000, 5'b11111,
+	5'b11111, 5'b10000, 5'b11110, 5'b10000, 5'b10000,
+	5'b01010, 5'b11111, 5'b01010, 5'b11111, 5'b01010, // '#'
+	5'b00000, 5'b00000, 5'b00000, 5'b00000, 5'b00000, // ' '
+	5'b00000, 5'b00000, 5'b00000, 5'b01100, 5'b01100  // '.'
+};
+
 always @(posedge clk) begin
 	if (ce) begin
 		// Font Lookup
-		case (char_to_draw_s1)
-			5'h00: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b10001; 3: font_row_s2<=5'b10001; 4: font_row_s2<=5'b01110; default: font_row_s2<=0; endcase
-			5'h01: case(py_s1) 0: font_row_s2<=5'b00100; 1: font_row_s2<=5'b01100; 2: font_row_s2<=5'b00100; 3: font_row_s2<=5'b00100; 4: font_row_s2<=5'b01110; default: font_row_s2<=0; endcase
-			5'h02: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b00110; 3: font_row_s2<=5'b01000; 4: font_row_s2<=5'b11111; default: font_row_s2<=0; endcase
-			5'h03: case(py_s1) 0: font_row_s2<=5'b11110; 1: font_row_s2<=5'b00001; 2: font_row_s2<=5'b01110; 3: font_row_s2<=5'b00001; 4: font_row_s2<=5'b11110; default: font_row_s2<=0; endcase
-			5'h04: case(py_s1) 0: font_row_s2<=5'b10001; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b11111; 3: font_row_s2<=5'b00001; 4: font_row_s2<=5'b00001; default: font_row_s2<=0; endcase
-			5'h05: case(py_s1) 0: font_row_s2<=5'b11111; 1: font_row_s2<=5'b10000; 2: font_row_s2<=5'b11110; 3: font_row_s2<=5'b00001; 4: font_row_s2<=5'b11110; default: font_row_s2<=0; endcase
-			5'h06: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10000; 2: font_row_s2<=5'b11110; 3: font_row_s2<=5'b10001; 4: font_row_s2<=5'b01110; default: font_row_s2<=0; endcase
-			5'h07: case(py_s1) 0: font_row_s2<=5'b11111; 1: font_row_s2<=5'b00001; 2: font_row_s2<=5'b00010; 3: font_row_s2<=5'b00100; 4: font_row_s2<=5'b00100; default: font_row_s2<=0; endcase
-			5'h08: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b01110; 3: font_row_s2<=5'b10001; 4: font_row_s2<=5'b01110; default: font_row_s2<=0; endcase
-			5'h09: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b01111; 3: font_row_s2<=5'b00001; 4: font_row_s2<=5'b01110; default: font_row_s2<=0; endcase
-			5'h0A: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b11111; 3: font_row_s2<=5'b10001; 4: font_row_s2<=5'b10001; default: font_row_s2<=0; endcase
-			5'h0B: case(py_s1) 0: font_row_s2<=5'b11110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b11110; 3: font_row_s2<=5'b10001; 4: font_row_s2<=5'b11110; default: font_row_s2<=0; endcase
-			5'h0C: case(py_s1) 0: font_row_s2<=5'b01110; 1: font_row_s2<=5'b10000; 2: font_row_s2<=5'b10000; 3: font_row_s2<=5'b10000; 4: font_row_s2<=5'b01110; default: font_row_s2<=0; endcase
-			5'h0D: case(py_s1) 0: font_row_s2<=5'b11110; 1: font_row_s2<=5'b10001; 2: font_row_s2<=5'b10001; 3: font_row_s2<=5'b10001; 4: font_row_s2<=5'b11110; default: font_row_s2<=0; endcase
-			5'h0E: case(py_s1) 0: font_row_s2<=5'b11111; 1: font_row_s2<=5'b10000; 2: font_row_s2<=5'b11110; 3: font_row_s2<=5'b10000; 4: font_row_s2<=5'b11111; default: font_row_s2<=0; endcase
-			5'h0F: case(py_s1) 0: font_row_s2<=5'b11111; 1: font_row_s2<=5'b10000; 2: font_row_s2<=5'b11110; 3: font_row_s2<=5'b10000; 4: font_row_s2<=5'b10000; default: font_row_s2<=0; endcase
-			5'h10: case(py_s1) 0: font_row_s2<=5'b01010; 1: font_row_s2<=5'b11111; 2: font_row_s2<=5'b01010; 3: font_row_s2<=5'b11111; 4: font_row_s2<=5'b01010; default: font_row_s2<=0; endcase // '#'
-			5'h11: case(py_s1) 0: font_row_s2<=5'b00000; 1: font_row_s2<=5'b00000; 2: font_row_s2<=5'b00000; 3: font_row_s2<=5'b00000; 4: font_row_s2<=5'b00000; default: font_row_s2<=0; endcase // ' '
-			5'h12: case(py_s1) 0: font_row_s2<=5'b00000; 1: font_row_s2<=5'b00000; 2: font_row_s2<=5'b00000; 3: font_row_s2<=5'b01100; 4: font_row_s2<=5'b01100; default: font_row_s2<=0; endcase // '.'
-			default: font_row_s2<=0;
-		endcase
+		font_row_s2    <= font[char_to_draw_s1];
 
 		// Forward state
 		px_s2          <= px_s1;
@@ -370,22 +372,18 @@ end
 wire [2:0] px_rev = (px_s2 < 5) ? 3'd4 - px_s2 : 3'd0;
 wire pixel_base   = (px_s2 < 5) ? font_row_s2[px_rev] : 1'b0;
 
-reg [1:0] pixel_color_out;
-
 always @(posedge clk) begin
 	if (ce) begin
 		if (valid_osd_s2 && pixel_base && drv_led_act_s2 && drv_we_act_s2) begin
-			pixel_color_out <= 2'd3; // Red (Drive Write)
+			pixel_color <= 3'd4; // Red (Drive Write)
 		end else if ((valid_osd_s2 && pixel_base && drv_led_act_s2 && ~drv_we_act_s2) || (valid_wr_s2 && pixel_base)) begin
-			pixel_color_out <= 2'd2; // Yellow (Drive Read or Debug Write)
+			pixel_color <= 3'd6; // Yellow (Drive Read or Debug Write)
 		end else if ((valid_osd_s2 && pixel_base && ~drv_led_act_s2) || (valid_rd_s2 && pixel_base)) begin
-			pixel_color_out <= 2'd1; // Green (Drive Idle or Debug Read)
+			pixel_color <= 3'd2; // Green (Drive Idle or Debug Read)
 		end else begin
-			pixel_color_out <= 2'd0; // Transparent
+			pixel_color <= 3'd0; // Transparent
 		end
 	end
 end
-
-assign pixel_color = pixel_color_out;
 
 endmodule

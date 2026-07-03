@@ -26,15 +26,11 @@ port(
 	tap_fifo_wrfull : out std_logic;                    -- do not write when fifo tap_fifo_full = 1
 	tap_fifo_error  : out std_logic;                    -- fifo fall empty (unrecoverable error)
 
-	osd_play_stop_toggle : in  std_logic;  -- PLAY/STOP toggle button from OSD
-
-	cass_sense : out std_logic;   -- 0 = PLAY/REW/FF/REC button is pressed
+	cass_sense : in  std_logic;   -- 0 = PLAY/REW/FF/REC button is pressed
 	cass_read  : buffer std_logic;   -- tape read signal
 	cass_write : in  std_logic;   -- signal to write on tape (not used)
 	cass_motor : in  std_logic;   -- 0 = tape motor is powered
-	cass_run   : out std_logic;   -- motor corrected with momentum
-
-	ear_input  : in  std_logic    -- tape input from EAR port
+	cass_run   : out std_logic    -- motor corrected with momentum
 );
 end c1530;
 
@@ -55,18 +51,9 @@ signal initial_delay  : std_logic;
 signal skip_bytes     : std_logic;
 signal playing        : std_logic;  -- 1 = tap or wav file is playing
 
-signal osd_play_stop_toggleD : std_logic;  -- for detecting change in the OSD toggle button
-signal sense                 : std_logic;  -- status of the PLAY/STOP tape button
-
-signal ear_inputD            : std_logic;                     -- for detecting input from EAR port
-signal ear_input_detected    : std_logic;                     -- 1=input from EAR port was detected
-signal ear_autostop_counter  : std_logic_vector(28 downto 0); -- counter for stopping after a delay when ear is no longer detected
-
 signal cass_motor_D  : std_logic;
 signal motor         : std_logic;
 signal motor_counter : unsigned(23 downto 0);
-
-constant autostop_time: std_logic_vector(28 downto 0) := std_logic_vector(to_unsigned(32000000 * 5, ear_autostop_counter'length)); -- about 5 seconds
 
 
 begin
@@ -97,44 +84,15 @@ begin
 		wave_len <= x"000004";
 		wave_cnt <= (others => '0');
 		get_24bits_len <= '0';
-		osd_play_stop_toggleD <= '0';
 		initial_delay <= '1';
 
 		tap_fifo_rdreq <='0';
 		tap_fifo_error <='0'; -- run out of data
 
-		sense <= '1'; -- STOP tape
 		motor <= '1';
 		cass_read <= '1';
 
 	elsif rising_edge(clk32) then
-
-		-- detect OSD PLAY/STOP button press
-		osd_play_stop_toggleD <= osd_play_stop_toggle;
-		if osd_play_stop_toggleD = '0' and osd_play_stop_toggle = '1' then
-			sense <= not sense;
-		end if;
-
-		-- detect EAR input
-		ear_inputD <= ear_input;
-		if ear_inputD /= ear_input then
-			ear_input_detected <= '1';
-			ear_autostop_counter <= autostop_time;
-		end if;
-
-		-- EAR input
-		if ear_input_detected='1' then
-			sense <= '0'; -- automatically press PLAY
-			cass_read <= not ear_input;
-
-			-- autostop
-		  if ear_autostop_counter = 0 then
-				ear_input_detected <= '0';
-				sense <= '1'; -- automatically press STOP
-			else
-				ear_autostop_counter <= ear_autostop_counter - "1";
-			end if;
-		end if;
 
 		-- simulate tape motor momentum
 		cass_motor_D <= cass_motor;
@@ -146,9 +104,9 @@ begin
 			motor <= cass_motor;
 		end if;
 
-		playing <= (not motor) and (not sense) and (not ear_input_detected);  -- cass_motor and sense are low active
+		playing <= (not motor) and (not cass_sense);  -- cass_motor and sense are low active
 
-		if playing = '0' and ear_input_detected = '0' then
+		if playing = '0' then
 			cass_read <= '1';
 		end if;	
 
@@ -257,7 +215,6 @@ begin
 	end if; -- clk32
 end process;
 
-cass_sense <= sense;
 cass_run <= motor;
 
 end struct;

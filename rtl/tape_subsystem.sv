@@ -36,25 +36,20 @@ module tape_subsystem (
 	input   [7:0] sdram_data,
 
 	// OSD/key transport controls. Inputs are pulses except counter_enable.
-	input         osd_play,
-	input         osd_stop,
-	input         osd_rew,
-	input         osd_ff,
-	input         osd_unload,
-	input         osd_counter_reset,
+	input         cmd_play,
+	input         cmd_stop,
+	input         cmd_rew,
+	input         cmd_ff,
+	input         cmd_unload,
+	input         cmd_counter_reset,
 	input         counter_enable,
 	input         tape_autoplay_off,
-
-	input         key_play,
-	input         key_stop,
-	input         key_rew,
-	input         key_ff,
-	input         key_counter_reset,
+	input         tape_autounload_off,
 
 	// C1530/C64 cassette lines
 	input         cass_write,
 	input         cass_motor,
-	output        cass_sense,
+	output reg    cass_sense,
 	output        cass_read,
 	output        cass_run,
 	output        cass_finish,
@@ -80,7 +75,7 @@ reg [24:0] tap_last_addr_r;
 assign tap_play_addr = tap_play_addr_r;
 assign tap_last_addr = tap_last_addr_r;
 
-assign tap_reset  = ~reset_n | tap_download | osd_unload | !tap_last_addr_r;
+assign tap_reset  = ~reset_n | tap_download | cmd_unload | !tap_last_addr_r | tape_end;
 assign tap_loaded = (|tap_last_addr_r) && tap_ready_gated; // keep mounted at end-of-tape
 assign tap_at_end = tap_loaded && (tap_play_addr_r >= tap_last_addr_r);
 
@@ -92,9 +87,7 @@ end
 // TAP version is needed by c1530 while playing back from SDRAM.
 reg [1:0] tap_version;
 always @(posedge clk) begin
-	if (!reset_n) begin
-		tap_version <= 2'd0;
-	end else if (ioctl_wr && load_tap && ioctl_addr == 25'd12) begin
+	if (ioctl_wr && load_tap && ioctl_addr == 25'd12) begin
 		tap_version <= ioctl_data[1:0];
 	end
 end
@@ -123,7 +116,7 @@ assign ioctl_wait = tap_download & tap_scanner_wait;
 tap_scanner #(.THRESH_BASE(2693), .THRESH_INC(6), .ABS_MAX(8191), .MAP_AW(13)) tap_scanner
 (
 	.clk(clk),
-	.reset_n(reset_n),
+	.reset_n(reset_n & ~tape_end & ~cmd_unload),
 	.start(tap_download_start),
 	.tap_wr(ioctl_wr & load_tap),
 	.tap_addr(ioctl_addr),
@@ -156,13 +149,11 @@ wire       tape_winding = tape_ff | tape_rew;
 // --- Tape counter overlay ---
 wire [12:0] tc_abs_count;
 wire        tc_wind_step;
-wire        tc_at_start;
 
 tape_counter #(.ABS_MAX(8191)) tape_counter
 (
 	.clk(clk),
 	.ce(ce),
-	.reset_n(reset_n),
 	.hblank(hblank),
 	.vblank(vblank),
 	.ntsc(ntsc),
@@ -170,7 +161,7 @@ tape_counter #(.ABS_MAX(8191)) tape_counter
 	.enable(counter_enable),
 	.tape_loaded(tap_loaded),
 	.new_tape(tap_reset),
-	.counter_reset(osd_counter_reset | key_counter_reset),
+	.counter_reset(cmd_counter_reset),
 	.tap_play_addr(tap_play_addr_r),
 	.tap_last_addr(tap_last_addr_r),
 
@@ -182,140 +173,76 @@ tape_counter #(.ABS_MAX(8191)) tape_counter
 
 	.wind_step(tc_wind_step),
 	.abs_count(tc_abs_count),
-	.at_tape_start(tc_at_start),
 
 	.pixel_color(pixel_color)
 );
 
 // --- Transport and C1530 feed control ---
 // Pulses used to keep the C1530 FIFO aligned with seek operations.
-reg        tape_stop_pulse = 1'b0;
 reg        tape_seek_reset = 1'b0;
 
-reg        osd_ff_d = 1'b0,   key_ff_d = 1'b0;
-reg        osd_rew_d = 1'b0,  key_rew_d = 1'b0;
-reg        osd_play_d = 1'b0, key_play_d = 1'b0;
-reg        osd_stop_d = 1'b0, key_stop_d = 1'b0;
-wire       osd_ff_change   = osd_ff   ^ osd_ff_d;
-wire       osd_rew_change  = osd_rew  ^ osd_rew_d;
-wire       osd_play_change = osd_play ^ osd_play_d;
-wire       osd_stop_change = osd_stop ^ osd_stop_d;
-localparam [19:0] OSD_CMD_LOCKOUT = 20'd640000; // 20 ms at 32 MHz
-reg [19:0] osd_ff_lockout = 20'd0, osd_rew_lockout = 20'd0;
-reg [19:0] osd_play_lockout = 20'd0, osd_stop_lockout = 20'd0;
-wire       osd_ff_pulse   = osd_ff_change   & (osd_ff_lockout   == 20'd0);
-wire       osd_rew_pulse  = osd_rew_change  & (osd_rew_lockout  == 20'd0);
-wire       osd_play_pulse = osd_play_change & (osd_play_lockout == 20'd0);
-wire       osd_stop_pulse = osd_stop_change & (osd_stop_lockout == 20'd0);
-wire       key_ff_edge    = key_ff   & ~key_ff_d;
-wire       key_rew_edge   = key_rew  & ~key_rew_d;
-wire       ff_edge        = osd_ff_pulse   | key_ff_edge;
-wire       rew_edge       = osd_rew_pulse  | key_rew_edge;
-wire       play_edge      = osd_play_pulse | (key_play & ~key_play_d);
-wire       stop_edge      = osd_stop_pulse | (key_stop & ~key_stop_d);
 reg  [1:0] tap_wrreq;
 wire       tap_wrfull;
-reg        tap_start;
-reg        tape_play_pulse = 1'b0;
+reg        tape_end;
 
 always @(posedge clk) begin
 	reg io_cycleD;
 	reg read_cyc;
+	reg cmd_ff_d, cmd_rew_d, cmd_play_d, cmd_stop_d;
+	
+	cmd_ff_d <= cmd_ff;
+	cmd_rew_d <= cmd_rew;
+	cmd_play_d <= cmd_play;
+	cmd_stop_d <= cmd_stop;
 
 	io_cycleD <= io_cycle;
 	tap_wrreq <= tap_wrreq << 1;
 	tap_map_update_d <= tap_map_update;
 	tap_map_update <= 1'b0;
-	tape_stop_pulse <= 1'b0;
 	tape_seek_reset <= 1'b0;
-	tape_play_pulse <= 1'b0;
-
-	// OSD command bits may produce a set/clear pair for one selection.  Detect
-	// level changes, then lock out the matching return edge so one selection maps
-	// to one transport command. Keyboard commands remain one-shot rising pulses.
-	if (osd_ff_lockout   != 20'd0) osd_ff_lockout   <= osd_ff_lockout   - 20'd1;
-	if (osd_rew_lockout  != 20'd0) osd_rew_lockout  <= osd_rew_lockout  - 20'd1;
-	if (osd_play_lockout != 20'd0) osd_play_lockout <= osd_play_lockout - 20'd1;
-	if (osd_stop_lockout != 20'd0) osd_stop_lockout <= osd_stop_lockout - 20'd1;
-	if (tap_loaded && osd_ff_pulse)   osd_ff_lockout   <= OSD_CMD_LOCKOUT;
-	if (tap_loaded && osd_rew_pulse)  osd_rew_lockout  <= OSD_CMD_LOCKOUT;
-	if (tap_loaded && osd_play_pulse) osd_play_lockout <= OSD_CMD_LOCKOUT;
-	if (tap_loaded && osd_stop_pulse) osd_stop_lockout <= OSD_CMD_LOCKOUT;
-
-	osd_ff_d   <= osd_ff;
-	key_ff_d   <= key_ff;
-	osd_rew_d  <= osd_rew;
-	key_rew_d  <= key_rew;
-	osd_play_d <= osd_play;
-	key_play_d <= key_play;
-	osd_stop_d <= osd_stop;
-	key_stop_d <= key_stop;
 
 	if (tap_reset) begin
 		// c1530 requires one more byte at the end due to FIFO early check.
 		tap_last_addr_r <= tap_download ? ioctl_addr + 2'd2 : 25'd0;
 		tap_play_addr_r <= 25'd0;
-		tap_start       <= ~tape_autoplay_off & tap_download;
+		cass_sense      <= tape_autoplay_off | ~tap_download;
 		read_cyc        <= 1'b0;
 		tape_ff         <= 1'b0;
 		tape_rew        <= 1'b0;
 		tap_map_rdaddr  <= 13'd0;
 		tap_map_update  <= 1'b0;
-		tap_map_update_d <= 1'b0;
-		tape_stop_pulse <= 1'b0;
+		tap_map_update_d<= 1'b0;
 		tape_seek_reset <= 1'b0;
-		tape_play_pulse <= 1'b0;
-		osd_ff_d <= osd_ff;
-		osd_rew_d <= osd_rew;
-		osd_play_d <= osd_play;
-		osd_stop_d <= osd_stop;
-		osd_ff_lockout <= 20'd0;
-		osd_rew_lockout <= 20'd0;
-		osd_play_lockout <= 20'd0;
-		osd_stop_lockout <= 20'd0;
+		tape_end        <= 1'b0;
 	end else begin
-		tap_start <= 1'b0;
 
-		// At physical end keep the TAP mounted, but release PLAY once so the
-		// Datassette state becomes STOP instead of auto-unloading the image.
-		if (tap_at_end && ~cass_sense) begin
-			tape_ff <= 1'b0;
-			tape_rew <= 1'b0;
-			tape_stop_pulse <= 1'b1;
-		end
+		if (tap_loaded) begin
 
-		// FF/REW commands select a transport direction. OSD events are treated as
-		// start commands so a possible OSD set/clear pair cannot cancel itself.
-		// Keyboard shortcuts keep the previous toggle behavior.
-		if (tap_loaded && ff_edge) begin
-			tape_ff  <= osd_ff_pulse ? 1'b1 : ~tape_ff;
-			tape_rew <= 1'b0;
-			if (~cass_sense) tape_stop_pulse <= 1'b1;
-		end
+			// FF/REW
+			if ((~cmd_ff_d && cmd_ff) || (~cmd_rew_d && cmd_rew))  begin
+				tape_ff  <= 0;
+				tape_rew <= 0;
+				if(!tape_ff && !tape_rew) begin
+					tape_ff  <= cmd_ff;
+					tape_rew <= ~cmd_ff;
+				end
+			end
 
-		if (tap_loaded && rew_edge) begin
-			tape_rew <= osd_rew_pulse ? 1'b1 : ~tape_rew;
-			tape_ff  <= 1'b0;
-			if (~cass_sense) tape_stop_pulse <= 1'b1;
-		end
-
-		// PLAY stops winding.
-		if (tap_loaded && play_edge) begin
-			tape_ff  <= 1'b0;
-			tape_rew <= 1'b0;
-			tape_play_pulse <= 1'b1;
-		end
-
-		// STOP stops winding and forces C1530 to STOP if PLAY is pressed.
-		if (tap_loaded && stop_edge) begin
-			tape_ff  <= 1'b0;
-			tape_rew <= 1'b0;
-			if (~cass_sense) tape_stop_pulse <= 1'b1;
+			// PLAY/STOP
+			if ((~cmd_play_d && cmd_play) || (~cmd_stop_d && cmd_stop)) begin
+				tape_ff  <= 0;
+				tape_rew <= 0;
+				cass_sense <= ~cass_sense | cmd_stop;
+			end
 		end
 
 		// Auto-stop at tape bounds.
 		if (tape_ff  && (tc_abs_count + 1'b1 >= tap_map_max)) tape_ff  <= 1'b0;
-		if (tape_rew && tc_at_start) tape_rew <= 1'b0;
+		if (tape_rew && !tc_abs_count) tape_rew <= 1'b0;
+		
+		// motor turned off near the end -> unload
+		if (!tape_autounload_off && cass_run && (tc_abs_count >= tap_map_max - 5'd5)) tape_end <= 1;
+		if (!tape_autounload_off && (tc_abs_count + 1'b1 >= tap_map_max) && !cass_sense) tape_end <= 1;
 
 		if (tape_winding) begin
 			read_cyc <= 1'b0;
@@ -323,7 +250,7 @@ always @(posedge clk) begin
 				if (tape_ff && (tc_abs_count + 1'b1 < tap_map_max)) begin
 					tap_map_rdaddr <= tc_abs_count + 1'b1;
 					tap_map_update <= 1'b1;
-				end else if (tape_rew && !tc_at_start) begin
+				end else if (tape_rew && tc_abs_count) begin
 					tap_map_rdaddr <= tc_abs_count - 1'b1;
 					tap_map_update <= 1'b1;
 				end
@@ -364,9 +291,7 @@ c1530 c1530
 	.cass_write(cass_write),
 	.cass_motor(cass_motor),
 	.cass_sense(cass_sense),
-	.cass_run(cass_run),
-	.osd_play_stop_toggle(tape_play_pulse | tap_start | tape_stop_pulse),
-	.ear_input(1'b0)
+	.cass_run(cass_run)
 );
 
 endmodule
