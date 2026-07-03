@@ -175,14 +175,15 @@ localparam CONF_STR = {
 	"hAdBR[61],Save cartridge;",
 	"hAO[62],Autosave,Off,On;",
 	"h3-;",
-	"h3R[7],Tape Play/Pause;",
-	"h3R[95],Tape Stop;",
-	"h3R[93],Tape Rewind;",
-	"h3R[94],Tape Fast Forward;",
+	"h3T[7],Tape Play/Pause;",
+	"h3T[95],Tape Stop;",
+	"h3T[93],Tape Rewind;",
+	"h3T[94],Tape Fast Forward;",
+	"h3T[91],Tape Counter Reset;",
+	"h3-;",
 	"h3O[92],Tape Counter,Off,On;",
-	"h3R[91],Tape Counter Reset;",
-	"h3R[23],Tape Unload;",
 	"h3O[11],Tape Sound,Off,On;",
+	"h3R[23],Tape Unload;",
 	"-;",
 
 	"P1,Audio & Video;", 
@@ -229,7 +230,8 @@ localparam CONF_STR = {
 	"P2O[24],Clear RAM on Reset,Yes,No;",
 	"P2O[50],Reset & Run PRG,Yes,No;",
 	"P2O[42],Pause When OSD is Open,No,Yes;",
-	"P2O[39],Tape Autoplay,Yes,No;",
+	"P2O[39],Tape Auto Play,Yes,No;",
+	"P2O[96],Tape Auto Unload,Yes,No;",
 	"P2O[38],Boot EasyFlash,Yes,No;",
 	"P2-;",
 	"P2FC8,ROM,System ROM C64+C1541 ;",
@@ -1538,7 +1540,7 @@ end
 //  - captures live read/writes not memory content, so set address before you expect read/writes (!)
 //
 //
-wire [1:0] ovl_color;
+wire [2:0] drv_ovl_color;
 
 reg [1:0] ce_sys_div = 0;
 wire ce_sys = (ce_sys_div == 0);
@@ -1566,16 +1568,11 @@ drv_overlay drv_ovl (
 	.wr_data(dbg_wr_data),
 	.base_addr(dbg_base_addr),
 
-	.pixel_color(ovl_color)
+	.pixel_color(drv_ovl_color)
 );
 
-wire [2:0] tape_ovl_color;
-wire [2:0] ovl_mix = (tape_ovl_color != 3'd0) ? tape_ovl_color : {1'b0, ovl_color};
-
-reg [2:0] ovl_color_sync;
-always @(posedge CLK_VIDEO) begin
-    ovl_color_sync <= ovl_mix;
-end
+reg [2:0] ovl_color;
+always @(posedge CLK_VIDEO) ovl_color <= tape_ovl_color | drv_ovl_color;
 
 video_mixer #(.GAMMA(1)) video_mixer
 (
@@ -1586,12 +1583,9 @@ video_mixer #(.GAMMA(1)) video_mixer
 	.gamma_bus(gamma_bus),
 
 	.ce_pix(ce_pix),
-	 // overlay colors: 0=Transparent, 1=Green, 2=Yellow, 3=Red, 4=Blue
-	.R((ovl_color_sync == 3'd2 || ovl_color_sync == 3'd3) ? 8'hFF :
-	   (ovl_color_sync == 3'd1 || ovl_color_sync == 3'd4) ? 8'h00 : r),
-	.G((ovl_color_sync == 3'd1 || ovl_color_sync == 3'd2) ? 8'hFF :
-	   (ovl_color_sync == 3'd3 || ovl_color_sync == 3'd4) ? 8'h00 : g),
-	.B((ovl_color_sync == 3'd4) ? 8'hFF : (ovl_color_sync != 3'd0) ? 8'h00 : b),
+	.R((ovl_color & 4) ? 8'hFF : ovl_color ? 8'h00 : r),
+	.G((ovl_color & 2) ? 8'hFF : ovl_color ? 8'h00 : g),
+	.B((ovl_color & 1) ? 8'hFF : ovl_color ? 8'h00 : b),
 	.HSync(hsync_out),
 	.VSync(vsync_out),
 	.HBlank(hblank),
@@ -1733,6 +1727,8 @@ wire       tap_loaded;
 wire [24:0] tap_play_addr;
 wire [24:0] tap_last_addr;
 
+wire [2:0] tape_ovl_color;
+
 tape_subsystem tape
 (
 	.clk(clk_sys),
@@ -1752,20 +1748,15 @@ tape_subsystem tape
 	.io_cycle(io_cycle),
 	.sdram_data(sdram_data),
 
-	.osd_play(status[7]),
-	.osd_stop(status[95]),
-	.osd_rew(status[93]),
-	.osd_ff(status[94]),
-	.osd_unload(status[23]),
-	.osd_counter_reset(status[91]),
+	.cmd_play(status[7] | tape_play),
+	.cmd_stop(status[95] | tape_key_stop),
+	.cmd_rew(status[93] | tape_key_rew),
+	.cmd_ff(status[94] | tape_key_ff),
+	.cmd_unload(status[23]),
+	.cmd_counter_reset(status[91] | tape_key_counter_reset),
 	.counter_enable(status[92]),
 	.tape_autoplay_off(status[39]),
-
-	.key_play(tape_play),
-	.key_stop(tape_key_stop),
-	.key_rew(tape_key_rew),
-	.key_ff(tape_key_ff),
-	.key_counter_reset(tape_key_counter_reset),
+	.tape_autounload_off(status[96]),
 
 	.cass_write(cass_write),
 	.cass_motor(cass_motor),
