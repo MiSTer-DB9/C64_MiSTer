@@ -147,7 +147,11 @@ input         UART_DSR,
 // 1 - D-/TX
 // 2..6 - USR2..USR6
 // Set USER_OUT to 1 to read from USER_IN.
-input   [6:0] USER_IN,
-output  [6:0] USER_OUT,
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_OSD + per-pin push-pull mask, USER_IO widened to 8 bits
+output        USER_OSD,
+output  [7:0] USER_PP,
+input   [7:0] USER_IN,
+output  [7:0] USER_OUT,
+// [MiSTer-DB9 END]
 
 input         OSD_STATUS
