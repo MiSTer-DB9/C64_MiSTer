@@ -11,7 +11,7 @@ set_global_assignment -name VHDL_FILE rtl/spram.vhd
 set_global_assignment -name VERILOG_FILE rtl/cartridge.v
 set_global_assignment -name VERILOG_FILE rtl/reu.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/am29f040.sv
-set_global_assignment -name VHDL_FILE rtl/c1530.vhd
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/c1530.sv
 set_global_assignment -name VERILOG_FILE rtl/c1351.v
 set_global_assignment -name VHDL_FILE rtl/video_sync.vhd
 set_global_assignment -name VHDL_FILE rtl/video_vicII_656x.vhd
@@ -20,4 +20,8 @@ set_global_assignment -name VHDL_FILE rtl/fpga64_keyboard.vhd
 set_global_assignment -name VHDL_FILE rtl/fpga64_buslogic.vhd
 set_global_assignment -name VHDL_FILE rtl/fpga64_sid_iec.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/drv_overlay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tap_scanner.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tap_time_map.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape_counter.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape_subsystem.sv
 set_global_assignment -name SYSTEMVERILOG_FILE c64.sv

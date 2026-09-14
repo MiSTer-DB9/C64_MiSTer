@@ -52,6 +52,10 @@ entity fpga64_keyboard is
 		restore_key : out std_logic;
 		mod_key     : out std_logic;
 		tape_play   : out std_logic;
+		tape_rew    : out std_logic;
+		tape_stop   : out std_logic;
+		tape_ff     : out std_logic;
+		tape_reset_counter : out std_logic;
 		
 		-- Config
 		-- backwardsReadingEnabled = 1 allows reversal of PIA registers to still work.
@@ -145,6 +149,7 @@ architecture rtl of fpga64_keyboard is
 
 	signal mod_key1: std_logic := '0';
 	signal mod_key2: std_logic := '0';
+	signal mod_key_t: std_logic := '0';
 
 	signal key_shift: std_logic := '0';
 	signal key_inst: std_logic := '0';
@@ -172,7 +177,9 @@ begin
 	pressed <= ps2_key(9);
 	extended<= ps2_key(8) = '1';
 
-	mod_key <= mod_key1 or mod_key2;
+	mod_key_t <= (mod_key1 or mod_key2) and pressed;
+	mod_key   <= mod_key1 or mod_key2;
+
 	key_shift <= key_shiftl or key_shiftr;
 	
 	matrix: process(clk)
@@ -184,6 +191,14 @@ begin
 			if delay_cnt /= 0 then
 				delay_cnt <= delay_cnt - 1;
 			end if;
+
+			-- Datassette shortcuts are command pulses, not held key states.
+			tape_play <= '0';
+			tape_rew <= '0';
+			tape_stop <= '0';
+			tape_ff <= '0';
+			tape_reset_counter <= '0';
+
 
 			-- reading A, scan pattern on B
 			pao(0) <= pai(0) and joyB(0) and
@@ -389,8 +404,7 @@ begin
 					when X"3B" => key_J <= pressed; 
 					when X"3C" => key_U <= pressed; 
 					when X"3D" => phys_7 <= pressed;
-					when X"3E" => phys_8 <= pressed;
-									  delay_cnt <= 300000;
+					when X"3E" => phys_8 <= pressed; delay_cnt <= 300000;
 					when X"41" => key_comma <= pressed; 
 					when X"42" => key_K <= pressed;
 					when X"43" => key_I <= pressed; 
@@ -412,26 +426,26 @@ begin
 					when X"5B" => key_star <= pressed; 
 					when X"5D" => key_pound <= pressed;
 					when X"66" => key_del <= pressed; 
-					when X"69" => if extended then key_equal   <= pressed; else key_1   <= pressed; end if;
-					when X"6B" => if extended then key_left    <= pressed; else key_4   <= pressed; end if;
-					when X"6C" => if extended then key_home    <= pressed; else key_7   <= pressed; end if;
-					when X"70" => if extended then key_inst    <= pressed; else key_0   <= pressed; end if;
-					when X"71" => if extended then key_del     <= pressed; else key_dot <= pressed; end if;
-					when X"72" => if extended then key_down    <= pressed; else key_2   <= pressed; end if;
-					when X"73" => key_5 <= pressed; 
-					when X"74" => if extended then key_right   <= pressed; else key_6   <= pressed; end if;
-					when X"75" => if extended then key_up      <= pressed; else key_8   <= pressed; end if;
-					when X"76" => key_runstop <= pressed; 
+					when X"69" => if not extended then key_1   <= pressed; else  key_equal <= pressed; end if;
+					when X"6B" => if not extended then key_4   <= pressed; elsif mod_key_t = '1'       then tape_rew <= '1';           else key_left <= pressed;  end if;
+					when X"6C" => if not extended then key_7   <= pressed; else  key_home <= pressed;  end if;
+					when X"70" => if not extended then key_0   <= pressed; else  key_inst <= pressed;  end if;
+					when X"71" => if not extended then key_dot <= pressed; elsif mod_key_t = '1'       then tape_reset_counter <= '1'; else key_del <= pressed;   end if;
+					when X"72" => if not extended then key_2   <= pressed; elsif mod_key_t = '1'       then tape_stop <= '1';          else key_down <= pressed;  end if;
+					when X"73" => key_5 <= pressed;
+					when X"74" => if not extended then key_6   <= pressed; elsif mod_key_t = '1'       then tape_ff <= '1';            else key_right <= pressed; end if;
+					when X"75" => if not extended then key_8   <= pressed; elsif mod_key_t = '1'       then tape_play <= '1';          else key_up <= pressed;    end if;
+					when X"76" => key_runstop <= pressed;
 					when X"78" => restore_key <= pressed; -- F11
-					when X"79" => key_plus <= pressed; 
-					when X"7A" => if extended then key_arrowup <= pressed; else key_3   <= pressed; end if;
-					when X"7B" => key_minus <= pressed; 
-					when X"7C" => key_star <= pressed; 
-					when X"7D" => if extended then tape_play <= pressed; else key_9   <= pressed; end if;
+					when X"79" => key_plus <= pressed;
+					when X"7A" => if not extended then key_3   <= pressed; else  key_arrowup<=pressed; end if;
+					when X"7B" => key_minus <= pressed;
+					when X"7C" => key_star <= pressed;
+					when X"7D" => if not extended then key_9   <= pressed; elsif pressed = '1'         then tape_play <= '1'; end if;
 					when others => null;
 				end case;
 			end if;
-			
+
 			-- Remap without dropping keystrokes:
 			-- shift-7 to shift-6
 			key_6  <= (phys_6 and not key_shift) or (phys_7 and key_shift);
@@ -463,6 +477,10 @@ begin
 					key_runstop   <= '0';
 					restore_key   <= '0';
 					tape_play     <= '0';
+					tape_rew      <= '0';
+					tape_stop     <= '0';
+					tape_ff       <= '0';
+					tape_reset_counter <= '0';
 					key_arrowup   <= '0';
 					key_equal     <= '0';
 					key_arrowleft <= '0';

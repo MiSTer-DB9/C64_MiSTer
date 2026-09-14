@@ -291,20 +291,11 @@ always @(posedge clk32) begin
 		// BANK is written to lower 6 bits of $DE00 - bit 8 is always set
 		// best to mirror banks at $8000 and $A000
 		5:	begin
-				if(!init_n) begin
-					exrom_overide <= 0;
-					game_overide  <= 0;
-				end
+				exrom_overide <= 0;
+				game_overide  <= (bank_cnt > 32);
 				if(ioe_wr) begin
 					bank_lo <= data_in[5:0];
 					bank_hi <= data_in[5:0];
-				end
-				// Autodetect Ocean Type B (512k)
-				// Only $8000 is used, while $A000 is RAM
-				if(cart_bank_wr) begin
-					if(cart_bank_num>=32) begin
-						game_overide <= 1;
-					end
 				end
 			end
 
@@ -805,7 +796,7 @@ ez_rom ez_rom
 	.mem_we(ezrom_we)
 );
 
-wire [20:0] ezmem_addr = {1'b1, ezrom_addr[19] ? hibanks[ezrom_addr[18:13]] : lobanks[ezrom_addr[18:13]], ezrom_addr[12:0]};
+wire [21:0] ezmem_addr = {2'b10, ezrom_addr[19] ? hibanks[ezrom_addr[18:13]] : lobanks[ezrom_addr[18:13]], ezrom_addr[12:0]};
 wire        ezmem_we   = ezrom_we & (romH ? hibanks_map[ezrom_addr[18:13]] : lobanks_map[ezrom_addr[18:13]]);
 
 assign mem_addr = (ezmem_oe) ? ezmem_addr : addr_out;
