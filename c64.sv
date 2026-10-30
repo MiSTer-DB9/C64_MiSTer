@@ -94,7 +94,10 @@ wire  [15:0] joy_raw_payload;
 // preempts the joydb wrapper on shared USER_IO pins. Default 1'b0 is no-op.
 // Upstream's native SNAC (status[88:87] "SNAC Joystick") is a separate raw-cable
 // path on the same USER_IO pins; gate joy_type->0 here so joydb defers to it.
-wire         snac_active     = |snac_mode; // snac_mode = status[88:87], declared below
+// Parallel Cable = On (par_on) keeps the parport branch of the USER_OUT
+// always_comb ahead of the joy_any_en arm, so USER_OUT_DRIVE never reaches
+// the pins; treat it like SNAC so the joydb wrapper and OSD probe stay inert.
+wire         snac_active     = |snac_mode | par_on; // snac_mode = status[88:87], par_on = status[98:97]==1, declared below
 // MT32-pi probe-suppression gate. Auto-detected from MT32 signals declared
 // elsewhere in this file (mt32_disable / mt32_use / mt32_on_primary). Hand-edit
 // if the heuristic missed your core's gate expression. Suppresses the OSD-open
@@ -250,7 +253,7 @@ localparam CONF_STR = {
 	"P3,Drives;",
 	"P3O[58:57],Enable Drive #8,If Mounted,Always,Never;",
 	"P3O[56:55],Enable Drive #9,If Mounted,Always,Never;",
-	"P3O[44],Parallel port,Enabled,Disabled;",
+	"P3O[98:97],Parallel Cable,Auto,On,Off;",
 	"P3O[86:85],Drives OSD,Activity Only,If Mounted,Debug,Off;",
 	"P3-;",
 	"P3O[80:78],Drive RPM    (G64),300.0,300.1,300.5,301.0,302.0,299.0,299.5,299.9;",
@@ -1207,6 +1210,8 @@ wire mounted_0 = ~old_img_mounted[0] & img_mounted[0];
 wire mounted_1 = ~old_img_mounted[1] & img_mounted[1];
 wire img_readonly_wp = img_readonly | (mounted_0 & status[76]) | (mounted_1 & status[77]);
 
+wire par_on = (status[98:97] == 1);
+
 iec_drive iec_drive
 (
 	.clk(clk_sys),
@@ -1235,6 +1240,7 @@ iec_drive iec_drive
 	.out_we(drive_we),
 	.disk_ready(disk_ready),
 
+	.par_force(par_on),
 	.par_data_i(drive_par_i),
 	.par_stb_i(drive_stb_i),
 	.par_data_o(drive_par_o),
@@ -1283,7 +1289,7 @@ always @(posedge clk_sys) begin
 	end
 end
 
-wire disk_parport = ~status[44];
+wire disk_parport = (status[98:97] == 0) | par_on;
 
 reg disk_access;
 always @(posedge clk_sys) begin
@@ -1829,7 +1835,8 @@ always_comb begin
 	drive_stb_i = 1;
 	USER_OUT    = 8'hFF;
 	
-	if(disk_parport & disk_access) begin
+	// Parallel Cable: Auto uses the idle timer; On keeps the cable connected.
+	if(par_on | (disk_parport & disk_access)) begin
 		drive_par_i = pb_o;
 		drive_stb_i = pc2_n_o;
 		pb_i        = drive_par_o;
